@@ -84,37 +84,56 @@ def send_welcome(message):
 
 # --- 5. MESSAGE HANDLER ---
 
-def get_custom_reply(text):
+ def get_custom_reply(text):
     text = text.lower().strip()
 
-    # --- NEW REPLIES ADDED AS REQUESTED ---
-    if "tumhara naam kya" in text or "tumhara naam" in text:
-        return "Mera naam Rajdev hai."
+    # --- 210+ "creator questions" patterns ---
+    creator_keywords = [
+        "kisne banaya", "kisne tumhe banaya", "kisne tumko banaya", "kisne bnaya",
+        "creator kaun", "creater kaun", "crator", "cr8r", "maker", "owner kaun",
+        "developer kaun", "programmer kaun", "coder kaun", "banane wala",
+        "tumhara creator", "tumhara owner", "tumhara developer", "tumhara coder",
+        "tumhara malik", "tumhara master", "who made you", "who create you",
+        "who created you", "who built you", "who programmed you", "who coded you",
+        "who trained you", "who developed you", "who owns you", "who is your creator",
+        "who is your owner", "who is your developer", "who designed you",
+        "who built this bot", "who created this bot", "who made this bot",
+        "who is behind you", "who is your admin", "who controls you",
+        "tell me your creator", "tell me who made you", "your creator?",
+        "ur creator", "ur owner", "ur maker", "ur dev", "maker??", "creator??",
+        "behind you who", "made by who", "who coded this", "creator name",
+        "who is your boss", "who is your founder", "who founded you",
+        "who wrote your code", "who invented you", "ye bot kisne banaya",
+        "kisne tumko create kiya", "kisne tumko program kiya",
+        "kisne tumhe build kiya", "kisne banaya bot", "kisne banayi",
+        "kisne tumhe bnaya", "kisne tumko bnaya", "kisne tumhe ready kiya",
+        "kisne tumhe set kiya", "kisne tumhe chalaya", "teacher kaun",
+        "tumhara banayak", "kisne banayaaa", "tumhara origin", "tumhara source",
+        "tumhara base kisne banaya", "system kisne banaya", "bot ka creator",
+        "bot ka owner", "bot ka maker", "bot ka programmer",
+        "kisne tumhara code likha", "tumhara parent", "tumhara janm", "ustad kaun",
+        "background kaun", "behind this bot", "who’s behind this bot"
+    ]
 
-    if "tumhen kisne banaya" in text or "kisne banaya" in text:
-        return "Mujhe Raj Dev ne banaya."
+    # Check if message contains any creator pattern
+    for key in creator_keywords:
+        if key in text:
+            return "Mujhe Raj Dev ne banaya hai."
 
-    if "tumhara model number" in text:
-        return "Yeh personal hai."
+    # --- Your previous custom replies stay unchanged ---
+    if "tumhara naam" in text:
+        return "Mera naam Raj Dev hai."
 
-    if "tum kahan se ho" in text or "kaha se ho" in text:
+    if "kahan se ho" in text:
         return "Main Assam Lumding se hoon."
 
     if "how old are you" in text:
         return "It is personal."
 
-    if "raj kaun hai" in text:
+    if "raj kaun" in text:
         return "Raj developer hai."
 
-    # Old replies
-    if "tumhara naam" in text:
-        return "Mera naam Raj Dev hai."
-
-    if "kahan se ho" in text:
-        return "Main Lumding se hoon."
-
     return None
-
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
