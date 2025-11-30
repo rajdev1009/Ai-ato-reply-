@@ -1,0 +1,6 @@
+pyTelegramBotAPI
+google-generativeai
+python-dotenv
+flask
+gunicorn
+gTTS
