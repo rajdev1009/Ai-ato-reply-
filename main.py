@@ -14,7 +14,7 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not API_KEY or not BOT_TOKEN:
-    print("❌ Error: API Key ya Bot Token missing hai!")
+    print("❌ Error: API Key ya Bot Token missing hai! .env file check karein.")
 
 # --- 2. SMART AI MODEL SETUP ---
 model = None
@@ -23,35 +23,27 @@ def setup_model():
     global model
     try:
         genai.configure(api_key=API_KEY)
-        print("🔍 Google AI Models check kar raha hoon...")
+        print("🔍 Google AI Model connect kar raha hoon...")
         
-        # Available models ki list nikalo
-        available_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
+        # --- FIX: Direct 'Flash' Model Selection ---
+        # Hum seedha 'gemini-2.0-flash' mangenge kyunki ye fast hai aur free quota iska zyada hai.
+        # Agar wo nahi chala to 'gemini-1.5-flash' try karega.
         
-        print(f"📋 Available Models: {available_models}")
-
-        # Best Model Select karo
-        target_model = ""
-        if "models/gemini-1.5-flash" in available_models:
-            target_model = "gemini-1.5-flash"
-        elif "models/gemini-pro" in available_models:
-            target_model = "gemini-pro"
-        else:
-            # Agar upar wale nahi mile, to list ka pehla model utha lo
-            if available_models:
-                target_model = available_models[0].replace("models/", "")
-        
-        if target_model:
-            print(f"✅ Selected Model: {target_model}")
+        try:
+            target_model = 'gemini-2.0-flash'
             model = genai.GenerativeModel(target_model)
-        else:
-            print("❌ Koi bhi compatible Gemini Model nahi mila!")
+            # Test connection
+            model.generate_content("Hello") 
+            print(f"✅ Selected & Tested Model: {target_model}")
+            
+        except Exception:
+            print("⚠️ 2.0 Flash fail hua, 1.5 Flash try kar raha hoon...")
+            target_model = 'gemini-1.5-flash'
+            model = genai.GenerativeModel(target_model)
+            print(f"✅ Fallback Model Selected: {target_model}")
 
     except Exception as e:
-        print(f"⚠️ Model Setup Error: {e}")
+        print(f"⚠️ Model Setup Critical Error: {e}")
 
 # Bot start hone se pehle model setup karo
 setup_model()
@@ -63,7 +55,7 @@ app = Flask(__name__)
 # --- 3. FLASK SERVER ---
 @app.route('/')
 def home():
-    return "✅ Raj Dev Bot is Online!", 200
+    return "✅ Raj Dev Bot is Online and Fixed!", 200
 
 # --- 4. COMMANDS ---
 @bot.message_handler(commands=['raj'])
@@ -98,7 +90,7 @@ def handle_message(message):
     try:
         print(f"User: {message.text}")
         
-        # Custom Reply
+        # Custom Reply Check
         custom = get_custom_reply(message.text)
         if custom:
             bot.reply_to(message, custom)
@@ -107,19 +99,31 @@ def handle_message(message):
         # AI Reply
         if model:
             try:
-                chat = model.start_chat(history=[])
-                response = chat.send_message(message.text)
+                # Send typing action
+                bot.send_chat_action(message.chat.id, 'typing')
+                
+                # Generate Response
+                response = model.generate_content(message.text)
+                
                 if response and response.text:
+                    # Telegram messages have a limit, split if too long is handled by libraries usually, 
+                    # but for safety let's send directly.
                     bot.reply_to(message, response.text, parse_mode="Markdown")
                 else:
                     bot.reply_to(message, "AI ne khali jawab diya.")
+                    
             except Exception as ai_e:
-                print(f"AI Generation Error: {ai_e}")
-                # Agar model fail hua, to dubara setup try karo
-                bot.reply_to(message, "AI Error. Retrying connection...")
-                setup_model()
+                error_msg = str(ai_e)
+                print(f"AI Generation Error: {error_msg}")
+                
+                if "429" in error_msg:
+                    bot.reply_to(message, "⏳ Abhi server busy hai (Quota Exceeded). Thodi der baad try karein.")
+                else:
+                    bot.reply_to(message, "Kuch gadbad ho gayi. Dobara try karein.")
+                    # Re-initialize model silently if needed
+                    setup_model()
         else:
-            bot.reply_to(message, "AI Model set nahi hai. Check logs.")
+            bot.reply_to(message, "AI Model set nahi hai. Admin ko contact karein.")
             setup_model()
 
     except Exception as e:
@@ -141,13 +145,8 @@ def run_bot_loop():
         except Exception as e:
             error_msg = str(e)
             print(f"⚠️ Error: {error_msg}")
-            if "409" in error_msg:
-                print("🛑 Conflict! Waiting 15s...")
-                time.sleep(15)
-            elif "Connection" in error_msg:
-                time.sleep(5)
-            else:
-                time.sleep(3)
+            # Agar conflict ya network issue hai to thoda wait karo
+            time.sleep(5)
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_bot_loop)
