@@ -48,10 +48,10 @@ def send_voice_greeting(message):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = (
-        "🙏 **Namaste! Main Raj Dev Bot hoon.**\n\n"
-        "Main AI se automatic baat karta hoon, par kuch sawal main khud batata hoon.\n\n"
+        "🙏 **Namaste! Main Raj Dev hoon.**\n\n"
+        "Main baat karta hoon, par kuch sawal main khud batata hoon.\n\n"
         "🎤 **Try karein:** `/raj` (Mera voice sunne ke liye)\n"
-        "❓ **Help:** `/help`"
+        "❓ **Help:** `/start`"
     )
     bot.reply_to(message, welcome_text, parse_mode="Markdown")
 
