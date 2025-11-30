@@ -25,14 +25,9 @@ def setup_model():
         genai.configure(api_key=API_KEY)
         print("🔍 Google AI Model connect kar raha hoon...")
         
-        # --- FIX: Direct 'Flash' Model Selection ---
-        # Hum seedha 'gemini-2.0-flash' mangenge kyunki ye fast hai aur free quota iska zyada hai.
-        # Agar wo nahi chala to 'gemini-1.5-flash' try karega.
-        
         try:
             target_model = 'gemini-2.0-flash'
             model = genai.GenerativeModel(target_model)
-            # Test connection
             model.generate_content("Hello") 
             print(f"✅ Selected & Tested Model: {target_model}")
             
@@ -45,10 +40,8 @@ def setup_model():
     except Exception as e:
         print(f"⚠️ Model Setup Critical Error: {e}")
 
-# Bot start hone se pehle model setup karo
 setup_model()
 
-# Telegram Bot Setup
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
@@ -75,14 +68,53 @@ def send_voice_greeting(message):
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "🙏 Namaste! Main Raj Dev Bot hoon. Puchiye kya puchna hai.")
+    help_text = (
+        "👋 **Welcome! Main Raj Dev Bot hoon.**\n\n"
+        "Aap mujhse yeh sab pooch sakte ho:\n"
+        "• 📚 Padhai se related questions\n"
+        "• 🧪 Science related sawal\n"
+        "• 🧠 General knowledge\n"
+        "• 🎓 Exam preparation help\n"
+        "• 💡 School/college problems\n"
+        "• 🤖 AI, coding, tech related questions\n\n"
+        "Mujhe banane wale creator ka naam: **Raj**\n\n"
+        "Bas message bhejo, main jawab dunga."
+    )
+    bot.reply_to(message, help_text, parse_mode="Markdown")
 
 # --- 5. MESSAGE HANDLER ---
+
 def get_custom_reply(text):
     text = text.lower().strip()
-    if "tumhara naam" in text: return "Mera naam Raj Dev hai."
-    if "kahan se ho" in text: return "Main Lumding se hoon."
+
+    # --- NEW REPLIES ADDED AS REQUESTED ---
+    if "tumhara naam kya" in text or "tumhara naam" in text:
+        return "Mera naam Rajdev hai."
+
+    if "tumhen kisne banaya" in text or "kisne banaya" in text:
+        return "Mujhe Raj Dev ne banaya."
+
+    if "tumhara model number" in text:
+        return "Yeh personal hai."
+
+    if "tum kahan se ho" in text or "kaha se ho" in text:
+        return "Main Assam Lumding se hoon."
+
+    if "how old are you" in text:
+        return "It is personal."
+
+    if "raj kaun hai" in text:
+        return "Raj developer hai."
+
+    # Old replies
+    if "tumhara naam" in text:
+        return "Mera naam Raj Dev hai."
+
+    if "kahan se ho" in text:
+        return "Main Lumding se hoon."
+
     return None
+
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -90,24 +122,17 @@ def handle_message(message):
     try:
         print(f"User: {message.text}")
         
-        # Custom Reply Check
         custom = get_custom_reply(message.text)
         if custom:
             bot.reply_to(message, custom)
             return
 
-        # AI Reply
         if model:
             try:
-                # Send typing action
                 bot.send_chat_action(message.chat.id, 'typing')
-                
-                # Generate Response
                 response = model.generate_content(message.text)
                 
                 if response and response.text:
-                    # Telegram messages have a limit, split if too long is handled by libraries usually, 
-                    # but for safety let's send directly.
                     bot.reply_to(message, response.text, parse_mode="Markdown")
                 else:
                     bot.reply_to(message, "AI ne khali jawab diya.")
@@ -120,7 +145,6 @@ def handle_message(message):
                     bot.reply_to(message, "⏳ Abhi server busy hai (Quota Exceeded). Thodi der baad try karein.")
                 else:
                     bot.reply_to(message, "Kuch gadbad ho gayi. Dobara try karein.")
-                    # Re-initialize model silently if needed
                     setup_model()
         else:
             bot.reply_to(message, "AI Model set nahi hai. Admin ko contact karein.")
@@ -145,7 +169,6 @@ def run_bot_loop():
         except Exception as e:
             error_msg = str(e)
             print(f"⚠️ Error: {error_msg}")
-            # Agar conflict ya network issue hai to thoda wait karo
             time.sleep(5)
 
 if __name__ == "__main__":
