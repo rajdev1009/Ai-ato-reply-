@@ -4,30 +4,24 @@ import google.generativeai as genai
 from flask import Flask
 from dotenv import load_dotenv
 import threading
-from gtts import gTTS  # Awaaz (Voice) banane ke liye
+import time
+from gtts import gTTS
 
 # --- 1. SETUP & CONFIGURATION ---
-# Local computer ke liye .env file load karega
 load_dotenv()
 
-# Keys uthana (Koyeb settings ya .env se)
 API_KEY = os.getenv("GOOGLE_API_KEY") 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Agar keys nahi mili to console mein error dikhayega
 if not API_KEY or not BOT_TOKEN:
     print("Error: API Key ya Bot Token missing hai! Settings check karein.")
 
 # Google Gemini AI Setup
+# Latest model 'gemini-1.5-flash' use kar rahe hain jo fast aur free hai
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-
-
-# Telegram Bot Setup
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# Flask Server (Koyeb par bot ko zinda rakhne ke liye zaroori hai)
 app = Flask(__name__)
 
 @app.route('/')
@@ -38,24 +32,14 @@ def home():
 @bot.message_handler(commands=['raj'])
 def send_voice_greeting(message):
     try:
-        # User ko dikhao ki bot 'recording' kar raha hai...
         bot.send_chat_action(message.chat.id, 'record_audio')
-        
-        # Ye text bot bolega
         text_to_speak = "Namaste! Main Raj Dev hoon. Main bolkar bhi jawab de sakta hoon. Bataiye kya seva karun?"
-        
-        # Text ko Audio (Hindi) mein convert karna
         tts = gTTS(text=text_to_speak, lang='hi')
         file_name = "voice_reply.mp3"
         tts.save(file_name)
-        
-        # Audio bhejna
         with open(file_name, "rb") as audio:
             bot.send_voice(message.chat.id, audio)
-            
-        # Bhej ne ke baad file delete kar do (Server safai)
         os.remove(file_name)
-        
     except Exception as e:
         print(f"Voice Error: {e}")
         bot.reply_to(message, "Voice message mein kuch takniki dikkat aayi.")
@@ -89,29 +73,20 @@ def send_help(message):
 # --- 4. CUSTOM LOGIC (FIXED ANSWERS) ---
 def get_custom_reply(text):
     text = text.lower().strip()
-    
-    # Check for keywords
     if "tumhara naam kya hai" in text or "what is your name" in text:
         return "Mera naam Raj Dev hai."
-    
     elif "tum kahan se ho" in text or "where are you from" in text:
         return "Main Lumding se hoon."
-    
     elif "lumding ka pin code" in text or "pincode" in text:
         return "Lumding ka pin code 782447 hai."
-    
     elif "lumding kahan rahte ho" in text or "address" in text:
         return "Main Dakshin Lumding SK Paultila mein rehta hoon."
-    
     elif "who made you" in text or "kisne banaya" in text:
         return "Mujhe Rajdev ne banaya hai."
-    
     elif "religion" in text or "dharam" in text:
         return "Mera religion Hindu hai."
-        
     elif "how old are you" in text or "age" in text or "umr" in text:
         return "Meri umr 22 saal hai." 
-
     return None
 
 # --- 5. MAIN MESSAGE HANDLER ---
@@ -119,36 +94,49 @@ def get_custom_reply(text):
 def handle_message(message):
     try:
         user_text = message.text
-        # Console mein print karein taaki logs mein dikhe
         print(f"User: {user_text}")
 
-        # Pehle check karo: Kya ye koi Fixed Sawal hai?
+        # 1. Custom Fixed Answer Check
         custom_reply = get_custom_reply(user_text)
         
         if custom_reply:
             bot.reply_to(message, custom_reply)
         else:
-            # Agar Fixed nahi hai, to Google AI se pucho
-            chat = model.start_chat(history=[])
-            response = chat.send_message(user_text)
-            
-            # Markdown use karein formatting ke liye
-            bot.reply_to(message, response.text, parse_mode="Markdown")
+            # 2. AI Answer Check
+            try:
+                chat = model.start_chat(history=[])
+                response = chat.send_message(user_text)
+                
+                # Check agar response valid hai
+                if response and response.text:
+                    # Markdown formatting problem se bachne ke liye safe reply
+                    bot.reply_to(message, response.text)
+                else:
+                    bot.reply_to(message, "Mujhe iska jawab samajh nahi aaya.")
+            except Exception as ai_error:
+                print(f"AI Error: {ai_error}")
+                # Agar AI fail ho jaye (jaise safety reason se), to ye message bhejo
+                bot.reply_to(message, "Main is sawal ka jawab nahi de sakta (Safety/API Error).")
 
     except Exception as e:
-        print(f"Error: {e}")
-        # Agar server busy ho ya error aaye
-        bot.reply_to(message, "Maaf kijiye, abhi main process nahi kar pa raha hoon.")
+        print(f"General Error: {e}")
+        bot.reply_to(message, "System mein kuch gadbad hai.")
 
 # --- 6. SERVER START ---
 def run_bot():
+    try:
+        print("Purane connections hata raha hoon...")
+        bot.remove_webhook()
+        time.sleep(1)
+    except Exception as e:
+        print(f"Webhook removal error: {e}")
+    
+    print("Bot polling start kar raha hai...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
-    # Bot ko alag thread mein chalana zaroori hai
     t = threading.Thread(target=run_bot)
     t.start()
     
-    # Web server start (Koyeb port 8000 par dhundta hai)
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
