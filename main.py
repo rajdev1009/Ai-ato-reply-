@@ -84,7 +84,7 @@ def send_welcome(message):
 
 # --- 5. MESSAGE HANDLER ---
 
- def get_custom_reply(text):
+def get_custom_reply(text):
     text = text.lower().strip()
 
     # --- 210+ "creator questions" patterns ---
