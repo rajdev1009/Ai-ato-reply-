@@ -6,137 +6,140 @@ from dotenv import load_dotenv
 import threading
 import time
 from gtts import gTTS
+from telebot import apihelper
 
-# --- 1. SETUP & CONFIGURATION ---
+# --- 1. CONFIGURATION & SETUP ---
 load_dotenv()
 
+# Keys check
 API_KEY = os.getenv("GOOGLE_API_KEY") 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not API_KEY or not BOT_TOKEN:
-    print("Error: API Key ya Bot Token missing hai! Settings check karein.")
+    print("❌ Error: API Key ya Bot Token missing hai! Environment Variables check karein.")
 
-# Google Gemini AI Setup
-# Latest model 'gemini-1.5-flash' use kar rahe hain jo fast aur free hai
+# Google Gemini AI Setup (Latest Flash Model)
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
+# Telegram Bot Setup
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# --- 2. FLASK SERVER (Bot ko zinda rakhne ke liye) ---
 @app.route('/')
 def home():
-    return "Raj Dev Bot is Running Successfully!", 200
+    return "✅ Raj Dev Bot is Online & Running!", 200
 
-# --- 2. SPECIAL VOICE COMMAND (/raj) ---
+# --- 3. BOT COMMANDS & LOGIC ---
+
+# Voice Command (/raj)
 @bot.message_handler(commands=['raj'])
 def send_voice_greeting(message):
     try:
         bot.send_chat_action(message.chat.id, 'record_audio')
-        text_to_speak = "Namaste! Main Raj Dev hoon. Main bolkar bhi jawab de sakta hoon. Bataiye kya seva karun?"
+        text_to_speak = "Namaste! Main Raj Dev hoon. Main bolkar bhi jawab de sakta hoon."
+        
+        # Audio file banao
         tts = gTTS(text=text_to_speak, lang='hi')
-        file_name = "voice_reply.mp3"
+        file_name = f"voice_{message.chat.id}.mp3"
         tts.save(file_name)
+        
+        # Audio bhejo
         with open(file_name, "rb") as audio:
             bot.send_voice(message.chat.id, audio)
+            
+        # File delete karo (cleanup)
         os.remove(file_name)
     except Exception as e:
         print(f"Voice Error: {e}")
-        bot.reply_to(message, "Voice message mein kuch takniki dikkat aayi.")
+        bot.reply_to(message, "Voice message bhejne mein dikkat aayi.")
 
-# --- 3. SHORTCUTS (START & HELP) ---
-@bot.message_handler(commands=['start'])
+# Start & Help Commands
+@bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    welcome_text = (
-        "🙏 **Namaste! Main Raj Dev hoon.**\n\n"
-        "Main baat karta hoon, par kuch sawal main khud batata hoon.\n\n"
-        "🎤 **Try karein:** `/raj` (Mera voice sunne ke liye)\n"
-        "❓ **Help:** `/start`"
-    )
-    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+    bot.reply_to(message, "🙏 Namaste! Main Raj Dev Bot hoon.\n\nMain Google AI se connect hoon. Mujhse kuch bhi puchiye!")
 
-@bot.message_handler(commands=['help'])
-def send_help(message):
-    help_text = (
-        "🆘 **Madad Kendra (Help)**\n\n"
-        "Main in sawalon ka fix jawab deta hoon:\n"
-        "1. `Tumhara naam kya hai?`\n"
-        "2. `Tum kahan se ho?`\n"
-        "3. `Lumding ka pin code?`\n"
-        "4. `Lumding kahan rahte ho?`\n"
-        "5. `Who made you?`\n"
-        "6. `Religion` / `Age`\n\n"
-        "Baaki kuch bhi pucho, main Google AI ka use karke jawab dunga!"
-    )
-    bot.reply_to(message, help_text, parse_mode="Markdown")
-
-# --- 4. CUSTOM LOGIC (FIXED ANSWERS) ---
+# Fixed Custom Replies
 def get_custom_reply(text):
     text = text.lower().strip()
-    if "tumhara naam kya hai" in text or "what is your name" in text:
-        return "Mera naam Raj Dev hai."
-    elif "tum kahan se ho" in text or "where are you from" in text:
-        return "Main Lumding se hoon."
-    elif "lumding ka pin code" in text or "pincode" in text:
-        return "Lumding ka pin code 782447 hai."
-    elif "lumding kahan rahte ho" in text or "address" in text:
-        return "Main Dakshin Lumding SK Paultila mein rehta hoon."
-    elif "who made you" in text or "kisne banaya" in text:
-        return "Mujhe Rajdev ne banaya hai."
-    elif "religion" in text or "dharam" in text:
-        return "Mera religion Hindu hai."
-    elif "how old are you" in text or "age" in text or "umr" in text:
-        return "Meri umr 22 saal hai." 
+    if "tumhara naam" in text: return "Mera naam Raj Dev hai."
+    if "kahan se ho" in text: return "Main Lumding se hoon."
+    if "pin code" in text: return "Lumding ka pin code 782447 hai."
+    if "who made you" in text: return "Mujhe Rajdev ne banaya hai."
     return None
 
-# --- 5. MAIN MESSAGE HANDLER ---
+# Main Message Handler (Text & AI)
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     try:
-        user_text = message.text
-        print(f"User: {user_text}")
-
-        # 1. Custom Fixed Answer Check
-        custom_reply = get_custom_reply(user_text)
+        print(f"User: {message.text}") # Log user text
         
-        if custom_reply:
-            bot.reply_to(message, custom_reply)
-        else:
-            # 2. AI Answer Check
-            try:
-                chat = model.start_chat(history=[])
-                response = chat.send_message(user_text)
+        # 1. Custom Reply Check
+        custom = get_custom_reply(message.text)
+        if custom:
+            bot.reply_to(message, custom)
+            return
+
+        # 2. Google AI Reply
+        try:
+            chat = model.start_chat(history=[])
+            response = chat.send_message(message.text)
+            
+            if response and response.text:
+                bot.reply_to(message, response.text, parse_mode="Markdown")
+            else:
+                bot.reply_to(message, "AI ne koi jawab nahi diya.")
                 
-                # Check agar response valid hai
-                if response and response.text:
-                    # Markdown formatting problem se bachne ke liye safe reply
-                    bot.reply_to(message, response.text)
-                else:
-                    bot.reply_to(message, "Mujhe iska jawab samajh nahi aaya.")
-            except Exception as ai_error:
-                print(f"AI Error: {ai_error}")
-                # Agar AI fail ho jaye (jaise safety reason se), to ye message bhejo
-                bot.reply_to(message, "Main is sawal ka jawab nahi de sakta (Safety/API Error).")
+        except Exception as ai_error:
+            print(f"AI Error: {ai_error}")
+            bot.reply_to(message, "Abhi main AI connect nahi kar pa raha hoon.")
 
     except Exception as e:
         print(f"General Error: {e}")
-        bot.reply_to(message, "System mein kuch gadbad hai.")
 
-# --- 6. SERVER START ---
-def run_bot():
+# --- 4. SMART POLLING LOOP (Sabse Zaroori Hissa) ---
+def run_bot_loop():
+    print("🤖 Bot System Starting...")
+    
+    # Step 1: Purane webhook/connections ko force delete karein
     try:
-        print("Purane connections hata raha hoon...")
         bot.remove_webhook()
         time.sleep(1)
     except Exception as e:
-        print(f"Webhook removal error: {e}")
-    
-    print("Bot polling start kar raha hai...")
-    bot.infinity_polling()
+        print(f"Webhook cleanup warning: {e}")
 
+    # Step 2: Infinite Loop jo kabhi band nahi hoga
+    while True:
+        try:
+            print("🔄 Polling start kar raha hoon...")
+            # Ye line bot ko Telegram se connect karti hai
+            bot.infinity_polling(timeout=20, long_polling_timeout=10)
+        
+        except Exception as e:
+            error_msg = str(e)
+            print(f"⚠️ CRASH DETECTED: {error_msg}")
+            
+            # Agar Error 409 (Conflict) hai - Matlab duplicate bot chal raha hai
+            if "409" in error_msg or "Conflict" in error_msg:
+                print("🛑 DUPLICATE INSTANCE! 15 second ruk raha hoon taaki purana wala band ho jaye...")
+                time.sleep(15)
+            
+            # Agar Internet/Connection error hai
+            elif "Connection" in error_msg or "104" in error_msg:
+                print("📡 Network Issue. 5 second mein retry karunga...")
+                time.sleep(5)
+            
+            else:
+                # Koi aur error
+                time.sleep(3)
+
+# --- 5. EXECUTION START ---
 if __name__ == "__main__":
-    t = threading.Thread(target=run_bot)
+    # Bot ko alag thread mein start karein
+    t = threading.Thread(target=run_bot_loop)
     t.start()
     
+    # Web Server ko start karein (Port Environment se lega)
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
