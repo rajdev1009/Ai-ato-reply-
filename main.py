@@ -18,9 +18,14 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not API_KEY or not BOT_TOKEN:
     print("❌ Error: API Key ya Bot Token missing hai! Environment Variables check karein.")
 
-# Google Gemini AI Setup (Latest Flash Model)
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Google Gemini AI Setup
+# NOTE: 'gemini-pro' model use kar rahe hain kyunki ye sabse stable hai
+# Agar 'gemini-1.5-flash' error de raha hai, to ye best option hai.
+try:
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel('gemini-pro')
+except Exception as e:
+    print(f"Model setup error: {e}")
 
 # Telegram Bot Setup
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -83,6 +88,7 @@ def handle_message(message):
 
         # 2. Google AI Reply
         try:
+            # History blank rakhi hai taaki simple sawal jawab ho sake
             chat = model.start_chat(history=[])
             response = chat.send_message(message.text)
             
@@ -93,12 +99,12 @@ def handle_message(message):
                 
         except Exception as ai_error:
             print(f"AI Error: {ai_error}")
-            bot.reply_to(message, "Abhi main AI connect nahi kar pa raha hoon.")
+            bot.reply_to(message, "Maaf kijiye, abhi main connect nahi kar pa raha hoon (Model Error).")
 
     except Exception as e:
         print(f"General Error: {e}")
 
-# --- 4. SMART POLLING LOOP (Sabse Zaroori Hissa) ---
+# --- 4. SMART POLLING LOOP ---
 def run_bot_loop():
     print("🤖 Bot System Starting...")
     
@@ -109,29 +115,23 @@ def run_bot_loop():
     except Exception as e:
         print(f"Webhook cleanup warning: {e}")
 
-    # Step 2: Infinite Loop jo kabhi band nahi hoga
+    # Step 2: Infinite Loop
     while True:
         try:
             print("🔄 Polling start kar raha hoon...")
-            # Ye line bot ko Telegram se connect karti hai
             bot.infinity_polling(timeout=20, long_polling_timeout=10)
         
         except Exception as e:
             error_msg = str(e)
             print(f"⚠️ CRASH DETECTED: {error_msg}")
             
-            # Agar Error 409 (Conflict) hai - Matlab duplicate bot chal raha hai
             if "409" in error_msg or "Conflict" in error_msg:
-                print("🛑 DUPLICATE INSTANCE! 15 second ruk raha hoon taaki purana wala band ho jaye...")
+                print("🛑 DUPLICATE INSTANCE! 15 second ruk raha hoon...")
                 time.sleep(15)
-            
-            # Agar Internet/Connection error hai
             elif "Connection" in error_msg or "104" in error_msg:
                 print("📡 Network Issue. 5 second mein retry karunga...")
                 time.sleep(5)
-            
             else:
-                # Koi aur error
                 time.sleep(3)
 
 # --- 5. EXECUTION START ---
@@ -140,6 +140,7 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot_loop)
     t.start()
     
-    # Web Server ko start karein (Port Environment se lega)
+    # Web Server ko start karein
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+    
