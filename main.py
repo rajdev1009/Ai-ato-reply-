@@ -12,7 +12,7 @@ load_dotenv()
 
 # Keys uthana (Koyeb settings ya .env se)
 API_KEY = os.getenv("GOOGLE_API_KEY") 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("7793783847:AAF0QSWnyLjUuaY8NfX-GumX0CY_cS2agCY")
 
 # Agar keys nahi mili to console mein error dikhayega
 if not API_KEY or not BOT_TOKEN:
