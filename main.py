@@ -20,7 +20,8 @@ if not API_KEY or not BOT_TOKEN:
 
 # Google Gemini AI Setup
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel('gemini-1.5-pro')
+
 
 # Telegram Bot Setup
 bot = telebot.TeleBot(BOT_TOKEN)
