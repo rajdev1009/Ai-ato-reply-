@@ -92,7 +92,7 @@ bot.send_message(user_id, "❌ Reminder cancelled.")
 --- 5. CUSTOM REPLIES ---
 
 creator_keywords = [
-"kisne banaya","kisne tumhe banaya","creator kaun","maker","developer kaun",
+"kisne banaya","kisne tumhe banaya","creator kaun","maker","developer kaun","raj kon",
 "owner kaun","tumhara creator","who made you","who created you","who is your creator"
 ]
 
@@ -146,10 +146,7 @@ start_text = (
 "• 🤖 AI, coding, tech related questions\n\n"
 "Mujhe banane wale creator ka naam: Raj\n\n"
 "Bas message bhejo, main jawab dunga."
-)
-bot.reply_to(message, start_text)
-
-@bot.message_handler(commands=['help'])
+)@bot.message_handler(commands=['help'])
 def send_help(message):
 help_text = (
 "📌 Aap yeh questions puch sakte hain:\n"
@@ -167,7 +164,7 @@ bot.reply_to(message, help_text)
 @bot.message_handler(commands=['setalarm'])
 def command_set_alarm(message):
 try:
-args = message.text.split()[1:]
+args = message.text.split()[1:]  # /setalarm 16:00 Reminder text
 if len(args) < 2:
 bot.reply_to(message, "Usage: /setalarm HH:MM Reminder message")
 return
@@ -191,12 +188,14 @@ try:
 user_text = message.text or ""
 print(f"User: {user_text}")
 
+    # Custom override first
     custom = get_custom_reply(user_text)
     if custom:
         add_to_user_context(message.chat.id, user_text, custom)
         bot.reply_to(message, custom)
         return
 
+    # AI response with memory + fun style
     if model:
         try:
             bot.send_chat_action(message.chat.id, 'typing')
@@ -205,7 +204,10 @@ print(f"User: {user_text}")
             for c in context:
                 prompt += f"User: {c['user']}\nBot: {c['bot']}\n"
             prompt += f"User: {user_text}\nBot:"
+
+            # fun personality hint
             prompt += "\nNote: Reply funny, casual, flirtatious style, jokes allowed, language free."
+
             response = model.generate_content(prompt)
             resp_text = getattr(response, "text", None)
             if not resp_text:
@@ -213,6 +215,7 @@ print(f"User: {user_text}")
                     resp_text = response.candidates[0].content
                 except:
                     resp_text = "AI ne kuch samajh nahi paaya."
+
             add_to_user_context(message.chat.id, user_text, resp_text)
             bot.reply_to(message, resp_text)
         except Exception as ai_e:
@@ -259,3 +262,4 @@ t = threading.Thread(target=run_bot_loop)
 t.start()
 port = int(os.environ.get("PORT", 8000))
 app.run(host="0.0.0.0", port=port)
+bot.reply_to(message, start_text)
