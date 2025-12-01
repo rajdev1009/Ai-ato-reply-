@@ -25,7 +25,7 @@ def setup_model():
 global model
 try:
 genai.configure(api_key=API_KEY)
-print("🔍 Raj AI Model connect kar raha hoon...")
+print("🔍 Google AI Model connect kar raha hoon...")
 try:
 target_model = 'gemini-2.0-flash'
 model = genai.GenerativeModel(target_model)
@@ -107,7 +107,7 @@ if "tumhara naam" in t or "what is your name" in t:
 return "Mera naam Raj Dev hai."
 if "kahan se ho" in t or "where are you from" in t:
 return "Main Assam, Lumding se hoon."
-if "how old are you" in t or "bot" in t:
+if "how old are you" in t or "umar" in t:
 return "It is personal."
 if "raj kaun" in t or "who is raj" in t:
 return "Raj Developer hai."
