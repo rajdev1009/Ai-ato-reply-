@@ -9,17 +9,19 @@ import time
 import json 
 from gtts import gTTS
 import re
-import requests  # Nayi Library: Images download karne ke liye
+import requests
+import urllib.parse
 
-# --- 1. CONFIGURATION (APNI DETAILS YAHAN BHARO) ---
+# --- 1. CONFIGURATION ---
 load_dotenv()
 
-# Agar .env file use nahi kar rahe, toh direct strings yahan likh sakte ho
-API_KEY = os.getenv("GOOGLE_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+# Apni API Keys yahan dalein
+API_KEY = os.getenv("GOOGLE_API_KEY", "YOUR_GEMINI_API_KEY")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 
-# SABSE ZAROORI: Apni Telegram Numeric ID yahan daalo
-OWNER_ID = 5804953849  # Replace with your actual ID
+# 🚨 ADMIN SETTINGS (Zaroori Hai)
+OWNER_ID = 5804953849  # Apni Personal ID
+LOG_CHANNEL_ID = -1003448442249 # Apne Channel ki ID yahan daalo (Minus sign ke saath)
 
 if not API_KEY or not BOT_TOKEN:
     print("❌ Error: API Key ya Bot Token missing hai!")
@@ -30,16 +32,13 @@ OWNER_NAME = "Raj Dev"
 LOCATION = "Lumding, Assam"
 MEMORY_MODE = True 
 
-# --- 3. DANGEROUS PERSONALITY SETUP ---
+# --- 3. PERSONALITY ---
 BOT_PERSONALITY = f"""
 Tumhara naam '{BOT_NAME}' hai. Tumhe '{OWNER_NAME}' ({LOCATION}) ne banaya hai.
-
-TUMHARA CHARACTER:
-1. **BEHAVIOR:** Normal baat pe friendly, gali dene wale ko savage roast.
-2. **MOVIES & SERIES:** Tum expert ho.
-3. **PADHAI:** Maths/Science serious hoke padhana.
-4. **CREATIVITY:** Tumhe pata hai ki tum photos bhi bana sakte ho (User ko bolo '/img' use kare).
-5. **IDENTITY:** Raj Dev ka system hoon.
+1. Normal baat pe friendly, gali pe savage roast.
+2. Movies/Series expert.
+3. Maths/Science teacher.
+4. Photo create kar sakte ho (/img command).
 """
 
 # --- 4. AI MODEL SETUP ---
@@ -62,142 +61,147 @@ setup_model()
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- 5. SMART MEMORY SYSTEM ---
+# --- 5. MEMORY & LOGGING SYSTEM ---
 JSON_FILE = "reply.json"
 if not os.path.exists(JSON_FILE):
-    with open(JSON_FILE, "w", encoding="utf-8") as f:
-        json.dump({}, f)
+    with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 def get_reply_from_memory(text):
     try:
         if not text: return None
-        key = text.lower().strip()
         with open(JSON_FILE, "r") as f: data = json.load(f)
-        return data.get(key)
+        return data.get(text.lower().strip())
     except: return None
 
 def save_to_memory(question, answer):
     try:
         with open(JSON_FILE, "r") as f: data = json.load(f)
         data[question.lower().strip()] = answer
-        with open(JSON_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+        with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
     except: pass
 
 def clean_text_for_audio(text):
     return text.replace("*", "").replace("_", "").replace("`", "")
 
-# --- 6. FLASK SERVER ---
-@app.route('/')
-def home():
-    return f"✅ {BOT_NAME} is Online!", 200
+# 🔥 NEW: LOGGING FUNCTION (Channel mein bhejega)
+def send_log_to_channel(user, request_type, query, response):
+    try:
+        log_text = (
+            f"📝 **New Activity Log**\n\n"
+            f"👤 **User:** {user.first_name} (ID: `{user.id}`)\n"
+            f"📌 **Type:** {request_type}\n"
+            f"❓ **Query:** {query}\n"
+            f"🤖 **Bot Reply:** {response}"
+        )
+        bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Logging Error: {e}")
 
-# --- 7. BASIC COMMANDS ---
+# --- 6. SERVER ---
+@app.route('/')
+def home(): return f"✅ {BOT_NAME} Online with Logging!", 200
+
+# --- 7. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    user_name = message.from_user.first_name or "Bhai"
-    txt = (
-        f"🔥 **Namaste {user_name}! Main {BOT_NAME} hoon.**\n\n"
-        "👑 **Features:**\n"
-        "• 🗣️ Baat-cheet & Roast\n"
-        "• 🎨 **Image Generation:** `/img <prompt>` use karo\n"
-        "• 🎬 Movie Reviews\n"
-        "• 📚 Study Help\n\n"
-        "Bol kya scene hai?"
-    )
-    bot.reply_to(message, txt, parse_mode="Markdown")
+    bot.reply_to(message, "🔥 **System Online!**\n• Chat karo\n• `/img cat` likho photo ke liye\n• Voice bhejo baat karne ke liye", parse_mode="Markdown")
 
-@bot.message_handler(commands=['help'])
-def send_help(message):
-    bot.reply_to(message, "🆘 **Help:**\n• Chat karo normal.\n• Photo ke liye: `/img cat on bike` likho.\n• Settings sirf Boss ke liye.", parse_mode="Markdown")
-
-# --- 8. IMAGE GENERATION COMMAND (NEW) ---
+# --- 8. IMAGE GENERATION (With Logging) ---
 @bot.message_handler(commands=['img', 'image'])
 def send_image_generation(message):
-    # Prompt nikalna: "/img" ko hata kar baaki text lena
     prompt = message.text.replace("/img", "").replace("/image", "").strip()
-    
     if not prompt:
-        bot.reply_to(message, "⚠️ **Abe gadhe!** Photo kiski banau? \nAise likh: `/img flying dog`")
+        bot.reply_to(message, "⚠️ Likh toh sahi kya banau! Ex: `/img flying dog`")
         return
 
     bot.send_chat_action(message.chat.id, 'upload_photo')
-    bot.reply_to(message, "🎨 **Photo bana raha hoon, ruko...**")
-    
     try:
-        # Free Pollinations API use kar rahe hain (Best for Telegram Bots)
-        # Kyunki Google ka Imagen API kabhi kabhi free keys pe nahi chalta
-        image_url = f"https://image.pollinations.ai/prompt/{prompt}"
+        encoded_prompt = urllib.parse.quote(prompt)
+        seed = int(time.time())
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?seed={seed}"
         
-        bot.send_photo(message.chat.id, image_url, caption=f"🖼️ **Generated:** {prompt}\n🤖 By: {BOT_NAME}")
+        bot.send_photo(message.chat.id, image_url, caption=f"🖼️ **Generated:** {prompt}")
+        
+        # ✅ LOGGING
+        send_log_to_channel(message.from_user, "IMAGE GENERATION", prompt, f"Image Sent: {image_url}")
+        
     except Exception as e:
-        bot.reply_to(message, f"❌ Error aa gaya: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
 
 # --- 9. OWNER SETTINGS ---
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
-    if message.from_user.id != OWNER_ID:
-        bot.reply_to(message, "🚫 **Access Denied!**")
-        return
+    if message.from_user.id != OWNER_ID: return
     markup = types.InlineKeyboardMarkup()
-    status_text = "✅ ON" if MEMORY_MODE else "❌ OFF"
-    markup.add(types.InlineKeyboardButton(f"Memory: {status_text}", callback_data="toggle_memory"))
-    bot.reply_to(message, f"⚙️ **Admin Panel**", reply_markup=markup)
+    status = "✅ ON" if MEMORY_MODE else "❌ OFF"
+    markup.add(types.InlineKeyboardButton(f"Memory: {status}", callback_data="toggle_memory"))
+    bot.reply_to(message, "⚙️ **Admin Panel**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "toggle_memory")
 def callback_memory(call):
     if call.from_user.id != OWNER_ID: return
     global MEMORY_MODE
     MEMORY_MODE = not MEMORY_MODE
-    new_status = "✅ ON" if MEMORY_MODE else "❌ OFF"
+    status = "✅ ON" if MEMORY_MODE else "❌ OFF"
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(f"Memory: {new_status}", callback_data="toggle_memory"))
-    bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
-                          text=f"⚙️ **Admin Panel**", reply_markup=markup)
+    markup.add(types.InlineKeyboardButton(f"Memory: {status}", callback_data="toggle_memory"))
+    bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="⚙️ **Admin Panel**", reply_markup=markup)
 
-# --- 10. AUDIO HANDLER ---
-@bot.callback_query_handler(func=lambda call: call.data == "speak_msg")
-def speak_message_callback(call):
+# --- 10. VOICE CHAT (With Logging) ---
+@bot.message_handler(content_types=['voice', 'audio'])
+def handle_voice_chat(message):
     try:
-        bot.send_chat_action(call.message.chat.id, 'record_audio')
-        bot.answer_callback_query(call.id, "Processing...")
-        original_text = call.message.text
-        if not original_text: return
+        bot.send_chat_action(message.chat.id, 'record_audio')
+        file_info = bot.get_file(message.voice.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
         
-        filename = f"voice_{call.from_user.id}.mp3"
-        tts = gTTS(text=clean_text_for_audio(original_text), lang='hi')
-        tts.save(filename)
-        with open(filename, "rb") as audio:
-            bot.send_voice(call.message.chat.id, audio)
-        os.remove(filename)
-    except Exception as e:
-        print(e)
+        user_audio_path = f"user_{message.from_user.id}.ogg"
+        with open(user_audio_path, 'wb') as new_file: new_file.write(downloaded_file)
+            
+        if model:
+            myfile = genai.upload_file(user_audio_path)
+            # AI ko bol rahe hain transcribe bhi kare taaki log mein dikhe
+            result = model.generate_content(["First transcribe what user said in bracket [], then give reply.", myfile])
+            ai_full_text = result.text
+            
+            # Log ke liye text nikalna
+            reply_audio_path = f"reply_{message.from_user.id}.mp3"
+            tts = gTTS(text=clean_text_for_audio(ai_full_text), lang='hi')
+            tts.save(reply_audio_path)
+            
+            with open(reply_audio_path, 'rb') as voice:
+                bot.send_voice(message.chat.id, voice)
+            
+            os.remove(user_audio_path)
+            os.remove(reply_audio_path)
 
-# --- 11. MAIN CHAT LOGIC ---
+            # ✅ LOGGING
+            send_log_to_channel(message.from_user, "VOICE CHAT", "Audio File", ai_full_text)
+
+    except Exception as e:
+        bot.reply_to(message, "❌ Audio samajh nahi aaya.")
+
+# --- 11. TEXT CHAT (With Logging) ---
 @bot.message_handler(func=lambda message: True)
-def handle_message(message):
+def handle_text(message):
     global MEMORY_MODE
     try:
         user_text = message.text
         if not user_text: return
-        first_name = message.from_user.first_name or "Bhai"
         
-        # Check Memory
         if MEMORY_MODE:
             saved = get_reply_from_memory(user_text)
             if saved:
                 markup = types.InlineKeyboardMarkup()
                 markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
-                bot.reply_to(message, f"{first_name}, {saved}", reply_markup=markup)
+                bot.reply_to(message, saved, reply_markup=markup)
                 return
 
-        # AI Generation
         if model:
             bot.send_chat_action(message.chat.id, 'typing')
             ai_prompt = (
-                f"User: {first_name}. Query: '{user_text}'. "
-                "Agar user photo mange, toh bolo '/img' command use kare. "
-                "Normal baat pe friendly, gali pe savage roast."
+                f"User: {message.from_user.first_name}. Query: '{user_text}'. "
+                "Agar user photo mange, toh bolo '/img' use kare. Reply in Hinglish."
             )
             response = model.generate_content(ai_prompt)
             ai_reply = response.text
@@ -208,8 +212,21 @@ def handle_message(message):
             markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
             bot.reply_to(message, ai_reply, parse_mode="Markdown", reply_markup=markup)
             
-    except Exception as e:
-        print(f"Error: {e}")
+            # ✅ LOGGING
+            send_log_to_channel(message.from_user, "TEXT CHAT", user_text, ai_reply)
+
+    except Exception as e: print(e)
+
+@bot.callback_query_handler(func=lambda call: call.data == "speak_msg")
+def speak_callback(call):
+    try:
+        bot.send_chat_action(call.message.chat.id, 'record_audio')
+        filename = f"tts_{call.from_user.id}.mp3"
+        tts = gTTS(text=clean_text_for_audio(call.message.text), lang='hi')
+        tts.save(filename)
+        with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
+        os.remove(filename)
+    except: pass
 
 # --- POLLING ---
 if __name__ == "__main__":
