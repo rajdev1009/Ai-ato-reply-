@@ -17,8 +17,8 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # 🚨 APNI ID AUR CHANNEL ID YAHAN DAALO
-OWNER_ID = 123456789  
-LOG_CHANNEL_ID = -100123456789 
+OWNER_ID = 5804953849  
+LOG_CHANNEL_ID = -1003448442249
 
 if not API_KEY or not BOT_TOKEN:
     print("⚠️ Warning: API Key ya Bot Token code mein nahi mila.")
