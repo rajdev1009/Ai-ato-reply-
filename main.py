@@ -1,3 +1,4 @@
+import os
 import telebot
 from telebot import types 
 import google.generativeai as genai
@@ -9,19 +10,18 @@ import json
 import edge_tts
 import asyncio
 
-# --- 1. CONFIGURATION (KOYEB ENVIRONMENT VARIABLES SE LEGA) ---
+# --- 1. CONFIGURATION ---
 load_dotenv()
 
-# Koyeb mein Environment Variables mein ye naam daalna
 API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # 🚨 APNI ID AUR CHANNEL ID YAHAN DAALO
-OWNER_ID = 5804953849
-LOG_CHANNEL_ID = -1003448442249
+OWNER_ID = 123456789  
+LOG_CHANNEL_ID = -100123456789 
 
 if not API_KEY or not BOT_TOKEN:
-    print("⚠️ Warning: API Key ya Bot Token code mein nahi mila. Koyeb Environment Variables check karo.")
+    print("⚠️ Warning: API Key ya Bot Token code mein nahi mila.")
 
 # --- 2. SETTINGS ---
 BOT_NAME = "Dev"
@@ -30,13 +30,15 @@ MEMORY_MODE = True
 # Voice ID (Male - Hindi)
 VOICE_ID = "hi-IN-MadhurNeural"
 
-# --- 3. PERSONALITY ---
+# --- 3. PERSONALITY (UPDATED TO FIX HALLUCINATIONS) ---
 BOT_PERSONALITY = f"""
 Tumhara naam '{BOT_NAME}' hai.
 1. Baat cheet mein Friendly aur Cool raho.
 2. Agar koi Gali de, toh Savage Roast karo.
 3. Jawab hamesha Hinglish (Hindi+English mix) mein do.
 4. Tum ek AI Assistant ho jo ab 'Edge TTS' voice use karta hai.
+5. IMPORTANT: Tum sirf TEXT padh sakte ho aur AUDIO sun sakte ho. Tum PHOTOS ya IMAGES nahi dekh sakte.
+6. Agar user koi file ya audio bheje, toh kabhi mat bolo ki "Is chitra mein" ya "Is image mein". Hamesha user ki baat ka seedha jawab do.
 """
 
 # --- 4. AI MODEL SETUP ---
@@ -62,8 +64,6 @@ app = Flask(__name__)
 
 # --- 5. MEMORY SYSTEM ---
 JSON_FILE = "reply.json"
-# Koyeb par file har restart par delete ho sakti hai (Ephemeral storage), 
-# lekin temporary memory ke liye yeh theek hai.
 if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
@@ -82,7 +82,6 @@ def save_to_memory(question, answer):
     except: pass
 
 def clean_text_for_audio(text):
-    # Markdown symbols hatana
     return text.replace("*", "").replace("_", "").replace("`", "").replace("#", "")
 
 def send_log_to_channel(user, request_type, query, response):
@@ -115,15 +114,15 @@ def text_to_speech_file(text, filename):
         print(f"Sync TTS Error: {e}")
         return False
 
-# --- 7. SERVER ROUTE (Koyeb Health Check) ---
+# --- 7. SERVER ROUTE ---
 @app.route('/')
 def home():
-    return f"✅ {BOT_NAME} is Running on Koyeb!", 200
+    return f"✅ {BOT_NAME} is Running!", 200
 
 # --- 8. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev is Online!**\nHigh Quality Voice ke saath.\nKuch bhi bolo (Text/Audio).", parse_mode="Markdown")
+    bot.reply_to(message, "🔥 **Dev is Online!**\nText ya Audio bhejo, main reply karunga.", parse_mode="Markdown")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -131,6 +130,7 @@ def settings_menu(message):
     markup = types.InlineKeyboardMarkup()
     status = "✅ ON" if MEMORY_MODE else "❌ OFF"
     markup.add(types.InlineKeyboardButton(f"Memory: {status}", callback_data="toggle_memory"))
+    markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_memory"))
     bot.reply_to(message, "⚙️ **Admin Panel**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "toggle_memory")
@@ -141,15 +141,21 @@ def callback_memory(call):
     status = "✅ ON" if MEMORY_MODE else "❌ OFF"
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(f"Memory: {status}", callback_data="toggle_memory"))
+    markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_memory"))
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="⚙️ **Admin Panel**", reply_markup=markup)
 
-# --- 9. VOICE & AUDIO HANDLER ---
+@bot.callback_query_handler(func=lambda call: call.data == "clear_memory")
+def callback_clear_mem(call):
+    if call.from_user.id != OWNER_ID: return
+    with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
+    bot.answer_callback_query(call.id, "Memory Cleared! 🗑️")
+
+# --- 9. VOICE & AUDIO HANDLER (FIXED) ---
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_voice_chat(message):
     try:
         bot.send_chat_action(message.chat.id, 'record_audio')
         
-        # Download User Audio
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         user_audio_path = f"user_{message.from_user.id}.ogg"
@@ -158,7 +164,16 @@ def handle_voice_chat(message):
         if model:
             # Send to Gemini
             myfile = genai.upload_file(user_audio_path)
-            result = model.generate_content(["Transcribe text then reply naturally in Hindi/Hinglish:", myfile])
+            
+            # 🔥 STRICT PROMPT TO FIX IMAGE HALLUCINATION 🔥
+            prompt = [
+                "This is an audio clip of the user speaking. Listen to it carefully.",
+                "Reply naturally to what the user said in Hindi/Hinglish.",
+                "DO NOT describe the audio file. DO NOT mention 'image' or 'photo'. Just reply to the speech.",
+                myfile
+            ]
+            
+            result = model.generate_content(prompt)
             ai_full_text = result.text
             
             # Generate Audio Reply
@@ -172,13 +187,10 @@ def handle_voice_chat(message):
                     bot.send_voice(message.chat.id, voice)
                 os.remove(reply_audio_path)
             else:
-                bot.reply_to(message, ai_full_text) # Fallback
+                bot.reply_to(message, ai_full_text)
 
-            # Cleanup
             if os.path.exists(user_audio_path): os.remove(user_audio_path)
-            
-            # Log
-            send_log_to_channel(message.from_user, "VOICE CHAT", "Audio Received", ai_full_text)
+            send_log_to_channel(message.from_user, "VOICE CHAT", "Audio Message", ai_full_text)
 
     except Exception as e:
         bot.reply_to(message, "❌ Audio Error.")
@@ -192,6 +204,7 @@ def handle_text(message):
         user_text = message.text
         if not user_text: return
         
+        # Check Memory
         saved = get_reply_from_memory(user_text) if MEMORY_MODE else None
         
         ai_reply = ""
@@ -199,7 +212,8 @@ def handle_text(message):
             ai_reply = saved
         elif model:
             bot.send_chat_action(message.chat.id, 'typing')
-            response = model.generate_content(f"User: {message.from_user.first_name}. Query: '{user_text}'. Reply in Hinglish.")
+            # Updated Prompt to prevent hallucinations
+            response = model.generate_content(f"User said: '{user_text}'. Reply comfortably in Hinglish. Do not mention images.")
             ai_reply = response.text
             if MEMORY_MODE: save_to_memory(user_text, ai_reply)
 
@@ -217,7 +231,7 @@ def speak_callback(call):
     try:
         bot.send_chat_action(call.message.chat.id, 'record_audio')
         filename = f"tts_{call.from_user.id}.mp3"
-        clean_txt = clean_text_for_audio(call.message.text)
+        clean_txt = clean_text_for_audio(call.message.text) # Message text padhega
         
         success = text_to_speech_file(clean_txt, filename)
         
@@ -226,16 +240,14 @@ def speak_callback(call):
             os.remove(filename)
     except: pass
 
-# --- POLLING & SERVER START ---
+# --- RUN BOT ---
 def run_bot():
     print("🤖 Bot Started...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
-    # Start Bot in Background Thread
     t = threading.Thread(target=run_bot)
     t.start()
-    
-    # Start Flask Server (Required for Koyeb to keep running)
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+        
