@@ -9,6 +9,7 @@ import time
 import json 
 import edge_tts
 import asyncio
+import tempfile
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -30,15 +31,15 @@ MEMORY_MODE = True
 # Voice ID (Male - Hindi)
 VOICE_ID = "hi-IN-MadhurNeural"
 
-# --- 3. PERSONALITY (UPDATED TO FIX HALLUCINATIONS) ---
+# --- 3. PERSONALITY ---
 BOT_PERSONALITY = f"""
 Tumhara naam '{BOT_NAME}' hai.
 1. Baat cheet mein Friendly aur Cool raho.
 2. Agar koi Gali de, toh Savage Roast karo.
 3. Jawab hamesha Hinglish (Hindi+English mix) mein do.
 4. Tum ek AI Assistant ho jo ab 'Edge TTS' voice use karta hai.
-5. IMPORTANT: Tum sirf TEXT padh sakte ho aur AUDIO sun sakte ho. Tum PHOTOS ya IMAGES nahi dekh sakte.
-6. Agar user koi file ya audio bheje, toh kabhi mat bolo ki "Is chitra mein" ya "Is image mein". Hamesha user ki baat ka seedha jawab do.
+5. STRICT RULE: Tum Images (Photos) na dekh sakte ho, na hi bana (generate) sakte ho.
+6. Agar user bole "Photo banao", toh saaf mana kar do.
 """
 
 # --- 4. AI MODEL SETUP ---
@@ -96,7 +97,7 @@ def send_log_to_channel(user, request_type, query, response):
             bot.send_message(LOG_CHANNEL_ID, log_text)
     except: pass
 
-# --- 6. VOICE ENGINE (EDGE TTS) ---
+# --- 6. VOICE ENGINE (FIXED LOOP) ---
 async def generate_voice_edge(text, filename):
     try:
         communicate = edge_tts.Communicate(text, VOICE_ID)
@@ -108,7 +109,11 @@ async def generate_voice_edge(text, filename):
 
 def text_to_speech_file(text, filename):
     try:
-        asyncio.run(generate_voice_edge(text, filename))
+        # Create a new loop for this thread to avoid "Loop Closed" errors
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(generate_voice_edge(text, filename))
+        loop.close()
         return True
     except Exception as e:
         print(f"Sync TTS Error: {e}")
@@ -122,7 +127,7 @@ def home():
 # --- 8. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev is Online!**\nText ya Audio bhejo, main reply karunga.", parse_mode="Markdown")
+    bot.reply_to(message, "🔥 **Dev is Online!**\nText ya Audio bhejo.", parse_mode="Markdown")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -150,26 +155,28 @@ def callback_clear_mem(call):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
     bot.answer_callback_query(call.id, "Memory Cleared! 🗑️")
 
-# --- 9. VOICE & AUDIO HANDLER (FIXED) ---
+# --- 9. VOICE & AUDIO HANDLER (IMPROVED) ---
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_voice_chat(message):
     try:
         bot.send_chat_action(message.chat.id, 'record_audio')
         
+        # Save file to temp path
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
+        
         user_audio_path = f"user_{message.from_user.id}.ogg"
-        with open(user_audio_path, 'wb') as new_file: new_file.write(downloaded_file)
+        with open(user_audio_path, 'wb') as new_file:
+            new_file.write(downloaded_file)
             
         if model:
-            # Send to Gemini
+            # Upload to Gemini
             myfile = genai.upload_file(user_audio_path)
             
-            # 🔥 STRICT PROMPT TO FIX IMAGE HALLUCINATION 🔥
             prompt = [
-                "This is an audio clip of the user speaking. Listen to it carefully.",
-                "Reply naturally to what the user said in Hindi/Hinglish.",
-                "DO NOT describe the audio file. DO NOT mention 'image' or 'photo'. Just reply to the speech.",
+                "Listen to this audio.",
+                "Reply naturally in Hindi/Hinglish to the speech.",
+                "DO NOT generate images. Just talk.",
                 myfile
             ]
             
@@ -187,14 +194,16 @@ def handle_voice_chat(message):
                     bot.send_voice(message.chat.id, voice)
                 os.remove(reply_audio_path)
             else:
-                bot.reply_to(message, ai_full_text)
+                bot.reply_to(message, ai_full_text + "\n(Voice generation failed)")
 
+            # Cleanup
             if os.path.exists(user_audio_path): os.remove(user_audio_path)
             send_log_to_channel(message.from_user, "VOICE CHAT", "Audio Message", ai_full_text)
 
     except Exception as e:
-        bot.reply_to(message, "❌ Audio Error.")
-        print(e)
+        # Error details user ko dikhana taaki debug kar sakein
+        bot.reply_to(message, f"❌ Audio Error: {str(e)}")
+        print(f"Error: {e}")
 
 # --- 10. TEXT CHAT HANDLER ---
 @bot.message_handler(func=lambda message: True)
@@ -204,7 +213,6 @@ def handle_text(message):
         user_text = message.text
         if not user_text: return
         
-        # Check Memory
         saved = get_reply_from_memory(user_text) if MEMORY_MODE else None
         
         ai_reply = ""
@@ -212,8 +220,7 @@ def handle_text(message):
             ai_reply = saved
         elif model:
             bot.send_chat_action(message.chat.id, 'typing')
-            # Updated Prompt to prevent hallucinations
-            response = model.generate_content(f"User said: '{user_text}'. Reply comfortably in Hinglish. Do not mention images.")
+            response = model.generate_content(f"User: '{user_text}'. Reply in Hinglish. No images.")
             ai_reply = response.text
             if MEMORY_MODE: save_to_memory(user_text, ai_reply)
 
@@ -231,14 +238,17 @@ def speak_callback(call):
     try:
         bot.send_chat_action(call.message.chat.id, 'record_audio')
         filename = f"tts_{call.from_user.id}.mp3"
-        clean_txt = clean_text_for_audio(call.message.text) # Message text padhega
+        clean_txt = clean_text_for_audio(call.message.text)
         
         success = text_to_speech_file(clean_txt, filename)
         
         if success:
             with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
             os.remove(filename)
-    except: pass
+        else:
+            bot.answer_callback_query(call.id, "Voice generation failed!")
+    except Exception as e:
+        print(f"Callback Error: {e}")
 
 # --- RUN BOT ---
 def run_bot():
@@ -250,4 +260,3 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-            
