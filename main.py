@@ -9,7 +9,6 @@ import time
 import json 
 import edge_tts
 import asyncio
-import tempfile
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -17,9 +16,11 @@ load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# 🚨 APNI ID AUR CHANNEL ID YAHAN DAALO
+# 🚨 IMPORTANT: Yahan apni numeric ID aur Channel ki ID daalo
+# Channel ID hamesha -100 se shuru hoti hai. 
+# Bot ko us channel mein ADMIN banana zaroori hai.
 OWNER_ID = 5804953849  
-LOG_CHANNEL_ID = -1003448442249
+LOG_CHANNEL_ID = -1003448442249 
 
 if not API_KEY or not BOT_TOKEN:
     print("⚠️ Warning: API Key ya Bot Token code mein nahi mila.")
@@ -32,14 +33,14 @@ MEMORY_MODE = True
 VOICE_ID = "hi-IN-MadhurNeural"
 
 # --- 3. PERSONALITY ---
+# Yahan humne add kiya hai ki wo user ka naam use kare
 BOT_PERSONALITY = f"""
 Tumhara naam '{BOT_NAME}' hai.
-1. Baat cheet mein Friendly aur Cool raho.
+1. Baat cheet mein Friendly, Cool aur thoda Attitude mein raho.
 2. Agar koi Gali de, toh Savage Roast karo.
 3. Jawab hamesha Hinglish (Hindi+English mix) mein do.
-4. Tum ek AI Assistant ho jo ab 'Edge TTS' voice use karta hai.
-5. STRICT RULE: Tum Images (Photos) na dekh sakte ho, na hi bana (generate) sakte ho.
-6. Agar user bole "Photo banao", toh saaf mana kar do.
+4. User ke sath baat karte waqt uska NAAM lekar baat karo (Jaise: "Arre Rahul bhai...", "Sun Amit...").
+5. Tum ek AI Assistant ho jo ab 'Edge TTS' voice use karta hai.
 """
 
 # --- 4. AI MODEL SETUP ---
@@ -85,19 +86,23 @@ def save_to_memory(question, answer):
 def clean_text_for_audio(text):
     return text.replace("*", "").replace("_", "").replace("`", "").replace("#", "")
 
+# 📝 LOGGING FUNCTION (Ye Channel pe message bhejega)
 def send_log_to_channel(user, request_type, query, response):
     try:
         if LOG_CHANNEL_ID:
             log_text = (
-                f"📝 **Log** | 👤 {user.first_name}\n"
-                f"📌 {request_type}\n"
-                f"❓ {query}\n"
-                f"🤖 {response}"
+                f"📝 **New Interaction**\n"
+                f"👤 **User:** {user.first_name} (ID: `{user.id}`)\n"
+                f"📌 **Type:** {request_type}\n\n"
+                f"❓ **Query:** {query}\n"
+                f"🤖 **Bot Reply:** {response}"
             )
-            bot.send_message(LOG_CHANNEL_ID, log_text)
-    except: pass
+            # Log channel mein bhejna
+            bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="Markdown")
+    except Exception as e:
+        print(f"❌ Log Error: {e}")
 
-# --- 6. VOICE ENGINE (FIXED LOOP) ---
+# --- 6. VOICE ENGINE (EDGE TTS) ---
 async def generate_voice_edge(text, filename):
     try:
         communicate = edge_tts.Communicate(text, VOICE_ID)
@@ -109,11 +114,7 @@ async def generate_voice_edge(text, filename):
 
 def text_to_speech_file(text, filename):
     try:
-        # Create a new loop for this thread to avoid "Loop Closed" errors
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(generate_voice_edge(text, filename))
-        loop.close()
+        asyncio.run(generate_voice_edge(text, filename))
         return True
     except Exception as e:
         print(f"Sync TTS Error: {e}")
@@ -127,7 +128,10 @@ def home():
 # --- 8. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev is Online!**\nText ya Audio bhejo.", parse_mode="Markdown")
+    user_name = message.from_user.first_name
+    welcome_text = f"🔥 **Dev is Online!**\nSwagat hai {user_name} bhai.\nText ya Audio bhejo, main reply karunga."
+    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+    send_log_to_channel(message.from_user, "COMMAND", "/start", "Welcome Message Sent")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -135,7 +139,6 @@ def settings_menu(message):
     markup = types.InlineKeyboardMarkup()
     status = "✅ ON" if MEMORY_MODE else "❌ OFF"
     markup.add(types.InlineKeyboardButton(f"Memory: {status}", callback_data="toggle_memory"))
-    markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_memory"))
     bot.reply_to(message, "⚙️ **Admin Panel**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "toggle_memory")
@@ -146,41 +149,33 @@ def callback_memory(call):
     status = "✅ ON" if MEMORY_MODE else "❌ OFF"
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(f"Memory: {status}", callback_data="toggle_memory"))
-    markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_memory"))
     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="⚙️ **Admin Panel**", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data == "clear_memory")
-def callback_clear_mem(call):
-    if call.from_user.id != OWNER_ID: return
-    with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
-    bot.answer_callback_query(call.id, "Memory Cleared! 🗑️")
-
-# --- 9. VOICE & AUDIO HANDLER (IMPROVED) ---
+# --- 9. VOICE & AUDIO HANDLER (Updated for Name) ---
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_voice_chat(message):
     try:
         bot.send_chat_action(message.chat.id, 'record_audio')
         
-        # Save file to temp path
+        # User ka naam nikala
+        user_name = message.from_user.first_name
+
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        
         user_audio_path = f"user_{message.from_user.id}.ogg"
-        with open(user_audio_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
+        with open(user_audio_path, 'wb') as new_file: new_file.write(downloaded_file)
             
         if model:
-            # Upload to Gemini
+            # Send to Gemini with NAME instruction
             myfile = genai.upload_file(user_audio_path)
             
-            prompt = [
-                "Listen to this audio.",
-                "Reply naturally in Hindi/Hinglish to the speech.",
-                "DO NOT generate images. Just talk.",
+            # 🔥 Prompt mein User ka naam add kar diya taaki wo naam se reply kare
+            prompt_parts = [
+                f"User ka naam '{user_name}' hai. Uski baat suno aur Hinglish mein naturally reply karo. Uska naam use karke address karna.",
                 myfile
             ]
             
-            result = model.generate_content(prompt)
+            result = model.generate_content(prompt_parts)
             ai_full_text = result.text
             
             # Generate Audio Reply
@@ -194,23 +189,25 @@ def handle_voice_chat(message):
                     bot.send_voice(message.chat.id, voice)
                 os.remove(reply_audio_path)
             else:
-                bot.reply_to(message, ai_full_text + "\n(Voice generation failed)")
+                bot.reply_to(message, ai_full_text)
 
-            # Cleanup
             if os.path.exists(user_audio_path): os.remove(user_audio_path)
+            
+            # Log to Channel
             send_log_to_channel(message.from_user, "VOICE CHAT", "Audio Message", ai_full_text)
 
     except Exception as e:
-        # Error details user ko dikhana taaki debug kar sakein
-        bot.reply_to(message, f"❌ Audio Error: {str(e)}")
-        print(f"Error: {e}")
+        bot.reply_to(message, "❌ Audio Error.")
+        print(e)
 
-# --- 10. TEXT CHAT HANDLER ---
+# --- 10. TEXT CHAT HANDLER (Updated for Name) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     global MEMORY_MODE
     try:
         user_text = message.text
+        user_name = message.from_user.first_name # User Name
+        
         if not user_text: return
         
         saved = get_reply_from_memory(user_text) if MEMORY_MODE else None
@@ -220,7 +217,9 @@ def handle_text(message):
             ai_reply = saved
         elif model:
             bot.send_chat_action(message.chat.id, 'typing')
-            response = model.generate_content(f"User: '{user_text}'. Reply in Hinglish. No images.")
+            # 🔥 Prompt mein Naam bheja
+            prompt = f"User Name: {user_name}. User Message: '{user_text}'. Reply in Hinglish and address user by name."
+            response = model.generate_content(prompt)
             ai_reply = response.text
             if MEMORY_MODE: save_to_memory(user_text, ai_reply)
 
@@ -228,6 +227,7 @@ def handle_text(message):
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, parse_mode="Markdown", reply_markup=markup)
         
+        # Log to Channel
         send_log_to_channel(message.from_user, "TEXT CHAT", user_text, ai_reply)
 
     except Exception as e: print(e)
@@ -245,10 +245,7 @@ def speak_callback(call):
         if success:
             with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
             os.remove(filename)
-        else:
-            bot.answer_callback_query(call.id, "Voice generation failed!")
-    except Exception as e:
-        print(f"Callback Error: {e}")
+    except: pass
 
 # --- RUN BOT ---
 def run_bot():
