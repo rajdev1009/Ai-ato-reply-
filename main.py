@@ -92,12 +92,9 @@ def send_log_to_channel(user, request_type, query, response):
             )
     except: pass
 
-# --- 6. AUDIO SYSTEM (RAM-BAAN FIX) ---
-
-# Helper to run async code in thread safely
+# --- 6. AUDIO SYSTEM (ASYNC FIX) ---
 def run_async_tts(text, filename):
     try:
-        # Naya loop banao, kaam karo, aur band kar do.
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         communicate = edge_tts.Communicate(text, EDGE_VOICE_ID)
@@ -112,17 +109,15 @@ def generate_audio(user_id, text, filename):
     config = get_user_config(user_id)
     engine = config.get('voice', 'edge') 
     
-    print(f"🎤 Generating Audio via: {engine.upper()}") # Server logs mein dikhega
+    print(f"🎤 Generating Audio via: {engine.upper()}")
 
-    # 1. Edge (Male) Request
+    # 1. Edge (Male)
     if engine == 'edge':
         success = run_async_tts(text, filename)
         if success: return True
-        else:
-            print("⚠️ Edge Failed! Switching to Google...")
-            # Fallback to Google agar Edge fail hua
+        else: print("⚠️ Edge Failed! Switching to Google...")
 
-    # 2. Google (Female) Request (Direct or Fallback)
+    # 2. Google (Female) Fallback
     try:
         tts = gTTS(text=text, lang='hi', slow=False)
         tts.save(filename)
@@ -139,7 +134,6 @@ def get_settings_markup(user_id):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    # Modes
     buttons = []
     mode_list = ["friendly", "study", "funny", "roast", "romantic", "sad", "gk", "math"]
     for m in mode_list:
@@ -147,14 +141,11 @@ def get_settings_markup(user_id):
         buttons.append(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
     markup.add(*buttons)
     
-    # Voice Switcher
     voice_label = "🗣️ Voice: ♂️ Male (Dev)" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
     markup.add(types.InlineKeyboardButton(voice_label, callback_data="toggle_voice"))
 
-    # Memory
     mem_status = "✅ ON" if config['memory'] else "❌ OFF"
     markup.add(types.InlineKeyboardButton(f"🧠 Memory: {mem_status}", callback_data="toggle_memory"))
-    
     markup.add(types.InlineKeyboardButton("🗑️ Clear JSON (Owner)", callback_data="clear_json"))
     return markup
 
@@ -242,7 +233,7 @@ def handle_callbacks(call):
             bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_markup(user_id))
         except: pass
 
-# --- 11. VOICE HANDLER ---
+# --- 11. VOICE & TEXT HANDLERS ---
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_voice_chat(message):
     try:
@@ -272,7 +263,6 @@ def handle_voice_chat(message):
         print(e)
         bot.reply_to(message, "❌ Audio Error")
 
-# --- 12. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -309,12 +299,11 @@ def handle_text(message):
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, parse_mode="Markdown", reply_markup=markup)
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
-
     except Exception as e: print(e)
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started (Final Fix)...")
+    print("🤖 Bot Started...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
