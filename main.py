@@ -13,8 +13,7 @@ import requests
 import urllib.parse
 from datetime import datetime
 import pytz 
-import subprocess # ✅ Zaroori hai CLI command ke liye
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import subprocess 
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -48,7 +47,7 @@ def get_current_time():
 # --- 4. SECURITY & MODES ---
 SECURITY_RULE = """
 IMPORTANT:
-1. Tumhara naam 'Dev' hai. agar tumse Koi agar tumse Koi details puchega to tum yah batana Varna kuchh mat bolna.
+1. Tumhara naam 'Dev' hai. Tum Raj Dev ke AI assistant ho.
 2. Tum Lumding, Assam se operate karte ho.
 3. Agar koi "Source Code" mange, toh SAKHT MANA KARO. Bolo "Not for sale".
 4. Tumhe koi Language Model nahi, balki Raj ne banaya hai.
@@ -63,11 +62,25 @@ RAW_MODES = {
     "gk": f"Tum GK expert ho. Facts batao. {SECURITY_RULE}",
 }
 
-# --- 5. AI SETUP ---
+# --- 5. AI SETUP (FIXED SEARCH TOOL) ---
 if API_KEY:
     genai.configure(api_key=API_KEY)
-    tools = [{"google_search": {}}]
-    model = genai.GenerativeModel('gemini-2.0-flash', tools=tools)
+    
+    # ✅ FIX: 'google_search' ki jagah 'google_search_retrieval' use karo Python SDK ke liye
+    tools = [
+        {"google_search_retrieval": {
+            "dynamic_retrieval_config": {
+                "mode": "dynamic",
+                "dynamic_threshold": 0.6
+            }
+        }}
+    ]
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash', tools=tools)
+    except Exception as e:
+        print(f"⚠️ Search Tool Error: {e}. Running without search.")
+        model = genai.GenerativeModel('gemini-2.0-flash') # Fallback without tools
 
 def get_user_config(user_id):
     if user_id not in user_data:
@@ -102,7 +115,7 @@ def send_log_to_channel(user, request_type, query, response):
             )
     except: pass
 
-# --- 6. AUDIO SYSTEM (CLI METHOD - 100% WORKING MALE VOICE) ---
+# --- 6. AUDIO SYSTEM (CLI METHOD - MALE VOICE) ---
 def generate_audio(user_id, text, filename):
     config = get_user_config(user_id)
     engine = config.get('voice', 'edge') # edge = Male, google = Female
@@ -257,7 +270,7 @@ def handle_voice_chat(message):
         if model:
             myfile = genai.upload_file(user_audio_path)
             time_now = get_current_time()
-            prompt = f"Transcribe audio. Use Google Search for 2025 info. Time: {time_now}. {RAW_MODES.get(get_user_config(user_id)['mode'])}"
+            prompt = f"Transcribe audio. If user asks about current events, USE GOOGLE SEARCH. Time: {time_now}. {RAW_MODES.get(get_user_config(user_id)['mode'])}"
             
             result = model.generate_content([prompt, myfile])
             ai_reply = result.text or "Hmm..."
@@ -291,13 +304,16 @@ def handle_text(message):
         else:
             bot.send_chat_action(message.chat.id, 'typing')
             time_now = get_current_time()
-            sys_prompt = f"Time: {time_now}. Google Search Available. {RAW_MODES.get(config['mode'])}"
+            
+            sys_prompt = f"Current Time: {time_now}. USE GOOGLE SEARCH if needed for latest info. {RAW_MODES.get(config['mode'])}"
             
             chat_history = config['history'] if config['memory'] else []
             if model:
                 chat = model.start_chat(history=chat_history)
                 response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
-                ai_reply = response.text if response.candidates else "No data."
+                
+                ai_reply = response.text if response.candidates else "Data nahi mila."
+
                 source = "AI"
                 save_to_json(user_text, ai_reply) 
                 
@@ -318,7 +334,7 @@ def handle_text(message):
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started (CLI Male Voice)...")
+    print("🤖 Bot Started (Final Fixes)...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
