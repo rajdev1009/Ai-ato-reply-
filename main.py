@@ -20,7 +20,6 @@ load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
 OWNER_ID = 5804953849  
 LOG_CHANNEL_ID = -1003448442249 
 
@@ -35,10 +34,8 @@ JSON_FILE = "reply.json"
 if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
-# User Data Store
 user_data = {} 
-# IMPORTANT: "hi-IN-MadhurNeural" hi Male voice hai. Change mat karna.
-EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
+EDGE_VOICE_ID = "hi-IN-MadhurNeural" # Male Voice
 
 # --- 3. TIME ---
 def get_current_time():
@@ -49,11 +46,11 @@ def get_current_time():
 # --- 4. MODES ---
 RAW_MODES = {
     "friendly": "Tumhara naam Dev hai. Tum friendly aur cool ho. Hinglish mein baat karo.",
-    "study": "Tum ek strict Teacher ho. Sirf padhai ki baat karo. Tumhara naam Dev hai.",
-    "funny": "Tum ek Comedian ho. Funny jawab do. Tumhara naam Dev hai.",
-    "roast": "Tum ek Savage Roaster ho. User ko roast karo. Tumhara naam Dev hai.",
-    "romantic": "Tum ek Flirty partner ho. Pyaar se baat karo. Tumhara naam Dev hai.",
-    "sad": "Tum bahut udaas ho. Emotional baat karo.",
+    "study": "Tum ek strict Teacher ho. Sirf padhai ki baat karo.",
+    "funny": "Tum ek Comedian ho. Funny jawab do.",
+    "roast": "Tum ek Savage Roaster ho. User ko roast karo.",
+    "romantic": "Tum ek Flirty partner ho. Pyaar se baat karo.",
+    "sad": "Tum bahut udaas ho.",
     "gk": "Tum GK expert ho. Short factual jawab do.",
     "math": "Tum Math Solver ho. Step-by-step samjhao."
 }
@@ -65,7 +62,6 @@ if API_KEY:
 
 def get_user_config(user_id):
     if user_id not in user_data:
-        # Default voice 'edge' (Male)
         user_data[user_id] = {"mode": "friendly", "memory": True, "voice": "edge", "history": []}
     return user_data[user_id]
 
@@ -96,45 +92,44 @@ def send_log_to_channel(user, request_type, query, response):
             )
     except: pass
 
-# --- 6. AUDIO SYSTEM (FIXED MALE VOICE) ---
+# --- 6. AUDIO SYSTEM (RAM-BAAN FIX) ---
 
-# Edge TTS Function (Async)
-async def generate_edge_wrapper(text, filename):
-    communicate = edge_tts.Communicate(text, EDGE_VOICE_ID)
-    await communicate.save(filename)
+# Helper to run async code in thread safely
+def run_async_tts(text, filename):
+    try:
+        # Naya loop banao, kaam karo, aur band kar do.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        communicate = edge_tts.Communicate(text, EDGE_VOICE_ID)
+        loop.run_until_complete(communicate.save(filename))
+        loop.close()
+        return True
+    except Exception as e:
+        print(f"❌ Async TTS Error: {e}")
+        return False
 
-# Master Audio Generator
 def generate_audio(user_id, text, filename):
     config = get_user_config(user_id)
-    engine = config.get('voice', 'edge') # Default Edge (Male)
+    engine = config.get('voice', 'edge') 
     
-    # --- MALE VOICE LOGIC (Improved) ---
-    if engine == 'edge':
-        try:
-            # asyncio.run() creates a fresh loop, runs the task, and closes it.
-            # This is safer for threaded environments like Telebot.
-            asyncio.run(generate_edge_wrapper(text, filename))
-            return True
-        except Exception as e:
-            print(f"⚠️ Male Voice Failed: {e}")
-            # Agar Male fail ho, tabhi Female try karega
-            try:
-                tts = gTTS(text=text, lang='hi', slow=False)
-                tts.save(filename)
-                return True
-            except: return False
+    print(f"🎤 Generating Audio via: {engine.upper()}") # Server logs mein dikhega
 
-    # --- FEMALE VOICE LOGIC ---
-    elif engine == 'google':
-        try:
-            tts = gTTS(text=text, lang='hi', slow=False)
-            tts.save(filename)
-            return True
-        except Exception as e:
-            print(f"⚠️ Google Voice Failed: {e}")
-            return False
-            
-    return False
+    # 1. Edge (Male) Request
+    if engine == 'edge':
+        success = run_async_tts(text, filename)
+        if success: return True
+        else:
+            print("⚠️ Edge Failed! Switching to Google...")
+            # Fallback to Google agar Edge fail hua
+
+    # 2. Google (Female) Request (Direct or Fallback)
+    try:
+        tts = gTTS(text=text, lang='hi', slow=False)
+        tts.save(filename)
+        return True
+    except Exception as e:
+        print(f"❌ Google TTS Error: {e}")
+        return False
 
 # --- 7. SETTINGS PANEL ---
 def get_settings_markup(user_id):
@@ -153,25 +148,24 @@ def get_settings_markup(user_id):
     markup.add(*buttons)
     
     # Voice Switcher
-    voice_label = "🗣️ Voice: ♂️ Male (Edge)" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
+    voice_label = "🗣️ Voice: ♂️ Male (Dev)" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
     markup.add(types.InlineKeyboardButton(voice_label, callback_data="toggle_voice"))
 
     # Memory
     mem_status = "✅ ON" if config['memory'] else "❌ OFF"
     markup.add(types.InlineKeyboardButton(f"🧠 Memory: {mem_status}", callback_data="toggle_memory"))
     
-    # Admin
     markup.add(types.InlineKeyboardButton("🗑️ Clear JSON (Owner)", callback_data="clear_json"))
     return markup
 
 # --- 8. SERVER ---
 @app.route('/')
-def home(): return f"✅ Dev Bot Ready! Time: {get_current_time()}", 200
+def home(): return f"✅ Dev Bot Running! Time: {get_current_time()}", 200
 
 # --- 9. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Online!**\nDefault Voice: Male.\nChange karne ke liye `/settings` dabayein.")
+    bot.reply_to(message, "🔥 **Dev Online!**\nVoice change karne ke liye `/settings` dabayein.\nImage ke liye `/img` use karein.")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -215,7 +209,7 @@ def handle_callbacks(call):
             msg = "Switched to Female (Google)"
         else:
             config['voice'] = 'edge'
-            msg = "Switched to Male (Edge)"
+            msg = "Switched to Male (Dev)"
         needs_refresh = True
         bot.answer_callback_query(call.id, msg)
 
@@ -232,7 +226,7 @@ def handle_callbacks(call):
 
     elif call.data == "speak_msg":
         try:
-            bot.answer_callback_query(call.id, "🎤 Generating Audio...")
+            bot.answer_callback_query(call.id, "🎤 Generating...")
             bot.send_chat_action(call.message.chat.id, 'record_audio')
             filename = f"tts_{user_id}.mp3"
             clean_txt = clean_text_for_audio(call.message.text)
@@ -240,7 +234,7 @@ def handle_callbacks(call):
             if generate_audio(user_id, clean_txt, filename):
                 with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
                 os.remove(filename)
-            else: bot.send_message(call.message.chat.id, "❌ Audio Error")
+            else: bot.send_message(call.message.chat.id, "❌ Audio Generation Failed")
         except: pass
 
     if needs_refresh and call.data != "speak_msg":
@@ -320,7 +314,7 @@ def handle_text(message):
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started...")
+    print("🤖 Bot Started (Final Fix)...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
