@@ -90,7 +90,7 @@ def get_settings_markup(user_id):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    # 1. Modes Section (Buttons ko decorate karna)
+    # 1. Modes Section
     buttons = []
     mode_list = ["friendly", "study", "funny", "roast", "romantic", "sad", "gk", "math"]
     
@@ -99,13 +99,11 @@ def get_settings_markup(user_id):
             text = f"✅ {m.capitalize()} (ON)"
         else:
             text = f"❌ {m.capitalize()}"
-        
         buttons.append(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
     
-    # Buttons ko grid mein add karna
     markup.add(*buttons)
     
-    # 2. Memory Section (Separator ke neeche)
+    # 2. Memory Section
     mem_status = "✅ ON" if config['memory'] else "❌ OFF"
     markup.add(types.InlineKeyboardButton(f"🧠 Yaad Rakhna: {mem_status}", callback_data="toggle_memory"))
     
@@ -128,32 +126,28 @@ def settings_menu(message):
     bot.reply_to(message, "🎛️ **Control Panel**\nApna Mode select karein:", reply_markup=markup)
 
 # --- 7. CALLBACK HANDLER (SETTINGS LOGIC) ---
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callbacks(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("set_mode_") or call.data == "toggle_memory" or call.data == "clear_json")
+def handle_settings_callbacks(call):
     user_id = call.from_user.id
     config = get_user_config(user_id)
-    
-    needs_refresh = False # Refresh tabhi karenge jab kuch change ho
+    needs_refresh = False 
 
-    # --- Mode Switching ---
     if call.data.startswith("set_mode_"):
         new_mode = call.data.split("_")[2]
         if config['mode'] != new_mode:
             config['mode'] = new_mode
-            config['history'] = [] # Naye mode ke liye history clear
+            config['history'] = [] 
             needs_refresh = True
             bot.answer_callback_query(call.id, f"Mode Updated: {new_mode.upper()}")
         else:
             bot.answer_callback_query(call.id, "Ye Mode pehle se ON hai!")
 
-    # --- Memory Toggle ---
     elif call.data == "toggle_memory":
         config['memory'] = not config['memory']
         needs_refresh = True
         status = "ON" if config['memory'] else "OFF"
         bot.answer_callback_query(call.id, f"Memory: {status}")
 
-    # --- Clear JSON ---
     elif call.data == "clear_json":
         if user_id == OWNER_ID:
             with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
@@ -161,14 +155,32 @@ def handle_callbacks(call):
         else:
             bot.answer_callback_query(call.id, "Sirf Owner ye kar sakta hai!")
 
-    # --- Update Panel UI ---
     if needs_refresh:
         try:
             new_markup = get_settings_markup(user_id)
             bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=new_markup)
         except: pass
 
-# --- 8. CHAT LOGIC ---
+# --- 8. TTS CALLBACK (FIXED) ---
+@bot.callback_query_handler(func=lambda call: call.data == "speak_msg")
+def speak_callback(call):
+    try:
+        bot.answer_callback_query(call.id, "🎤 Audio generate ho raha hai...")
+        bot.send_chat_action(call.message.chat.id, 'record_audio')
+        
+        filename = f"tts_{call.from_user.id}.mp3"
+        clean_txt = clean_text_for_audio(call.message.text)
+        
+        if text_to_speech_file(clean_txt, filename):
+            with open(filename, "rb") as audio: 
+                bot.send_voice(call.message.chat.id, audio)
+            os.remove(filename)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Audio Error")
+    except Exception as e: 
+        print(f"TTS Error: {e}")
+
+# --- 9. CHAT LOGIC ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -178,13 +190,13 @@ def handle_text(message):
         
         config = get_user_config(user_id)
         
-        # 1. JSON Memory Check
+        # Check JSON Memory
         saved_reply = get_reply_from_json(user_text)
         if saved_reply:
             ai_reply = saved_reply
             source = "JSON"
         else:
-            # 2. AI Generation
+            # AI Generation
             bot.send_chat_action(message.chat.id, 'typing')
             sys_prompt = BOT_MODES.get(config['mode'], BOT_MODES['friendly'])
             
@@ -195,7 +207,7 @@ def handle_text(message):
             ai_reply = response.text
             source = "AI"
             
-            save_to_json(user_text, ai_reply) # Auto-Learn
+            save_to_json(user_text, ai_reply) 
             
             if config['memory']:
                 if len(config['history']) > 20: config['history'] = config['history'][2:]
@@ -209,15 +221,9 @@ def handle_text(message):
 
     except Exception as e: print(e)
 
-# --- 9. TTS ---
-@bot.callback_query_handler(func=lambda call: call.data == "speak_msg")
-def speak_callback(call):
-    # (TTS Code same as before)
-    pass 
-
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started with Control Panel...")
+    print("🤖 Bot Started (Fixed TTS)...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
