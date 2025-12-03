@@ -2,8 +2,8 @@ pyTelegramBotAPI
 google-generativeai>=0.8.3
 python-dotenv
 flask
-edge-tts
 gTTS
+edge-tts
 pytz
 requests
 gunicorn
