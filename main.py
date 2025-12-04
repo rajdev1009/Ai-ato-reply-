@@ -324,7 +324,7 @@ def handle_text(message):
                     response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
                     ai_reply = response.text
                 except Exception as e:
-                    if "429" in str(e): ai_reply = "⚠️ Aaj ka Quota khatam."
+                    if "429" in str(e): ai_reply = "⚠️ main bahut thak Gaya Hun."
                     else: model_search_failed = True
             else: model_search_failed = True
             
@@ -335,7 +335,7 @@ def handle_text(message):
                         response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
                         ai_reply = response.text
                 except Exception as e:
-                     if "429" in str(e): ai_reply = "⚠️ Quota khatam."
+                     if "429" in str(e): ai_reply = "⚠️ abhi main thoda rest kar raha hun."
                      else: ai_reply = "Error."
 
             source = "AI"
