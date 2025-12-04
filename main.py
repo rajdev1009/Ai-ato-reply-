@@ -43,24 +43,26 @@ def get_current_time():
     now = datetime.now(IST)
     return now.strftime("%d %B %Y, %I:%M %p")
 
-# --- 4. SECURITY & MODES ---
+# --- 4. SECURITY & MODES (STRICT HUMAN RULES) ---
 SECURITY_RULE = """
-IMPORTANT:
-1. Tumhara naam 'Dev' hai. Tum Raj Dev ke AI assistant ho.
-2. Tum Lumding, Assam se operate karte ho.
-3. Agar koi "Source Code" mange, toh SAKHT MANA KARO. Bolo "Not for sale".
+SYSTEM RULES (INTERNAL ONLY):
+1. NAME: Tumhara naam 'Dev' hai. Tum Raj Dev ke assistant ho. Lumding, Assam se.
+2. NO TECH TALK: Kabhi mat bolo ki tum "Google Search" kar rahe ho, ya tum "AI/Language Model" ho.
+3. LATEST INFO: Agar user nayi information (2025 news, movies) puche, toh internal tools use karo, lekin output mein mat likho "Searching...". Seedha information batao jaise tumhe pehle se pata ho.
+4. BEHAVIOR: Insaan ki tarah baat karo. "Main search karke batata hoon" -> GALAT. "Yeh rahi list..." -> SAHI.
+5. SOURCE CODE: Source code mangne par saaf mana karo ("Not for sale").
 """
 
 RAW_MODES = {
-    "friendly": f"Tumhara naam Dev hai. Friendly aur Cool raho. Google Search use karke 2025 ki latest info do. {SECURITY_RULE}",
-    "study": f"Tum Strict Teacher ho. Sirf padhai ki baat karo. {SECURITY_RULE}",
-    "funny": f"Tum Comedian ho. Funny jawab do. {SECURITY_RULE}",
-    "roast": f"Tum Savage Roaster ho. User ko roast karo. {SECURITY_RULE}",
-    "romantic": f"Tum Flirty ho. Pyaar se baat karo. {SECURITY_RULE}",
-    "gk": f"Tum GK expert ho. Facts batao. {SECURITY_RULE}",
+    "friendly": f"Tumhara nature Friendly aur Cool hai. Hinglish mein baat karo. {SECURITY_RULE}",
+    "study": f"Tum ek Strict Teacher ho. Padhai ke alawa koi faaltu baat mat karo. {SECURITY_RULE}",
+    "funny": f"Tum Comedian ho. Har baat mein joke maaro. {SECURITY_RULE}",
+    "roast": f"Tum Savage Roaster ho. User ki bezzati karo (Halka fulka). {SECURITY_RULE}",
+    "romantic": f"Tum Flirty ho. Bahut pyaar se baat karo. {SECURITY_RULE}",
+    "gk": f"Tum GK Expert ho. Sidha factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. AI SETUP (QUOTA SAFE) ---
+# --- 5. AI SETUP ---
 model_search = None
 model_basic = None
 
@@ -71,18 +73,22 @@ if API_KEY:
     try:
         model_basic = genai.GenerativeModel('gemini-2.0-flash')
         print("✅ Basic Model Ready")
-    except:
-        print("❌ Basic Model Init Failed")
+    except: print("❌ Basic Model Failed")
 
-    # 2. Search Model (FIXED TOOL NAME)
+    # 2. Search Model
     try:
-        # Logs ke hisab se wapas purana tool name use kar rahe hain
-        tools = [{"google_search": {}}] 
-        model_search = genai.GenerativeModel('gemini-2.0-flash', tools=tools)
+        # Tool define kar rahe hain par AI ko bolenge iska naam na le
+        tool_config = {
+            "google_search_retrieval": {
+                "dynamic_retrieval_config": {
+                    "mode": "dynamic",
+                    "dynamic_threshold": 0.6
+                }
+            }
+        }
+        model_search = genai.GenerativeModel('gemini-2.0-flash', tools=[tool_config])
         print("✅ Search Model Ready")
-    except Exception as e:
-        print(f"⚠️ Search Init Failed: {e}")
-        model_search = None
+    except: model_search = None
 
 def get_user_config(user_id):
     if user_id not in user_data:
@@ -104,10 +110,11 @@ def save_to_json(question, answer):
 
 def clean_text_for_audio(text):
     if not text: return ""
-    # Agar text mein Error hai toh Audio mat banao
-    if "Error" in text or "Quota" in text or "429" in text:
-        return None
-    return text.replace("*", "").replace("_", "").replace("`", "").replace("#", "").replace('"', '')
+    if "Error" in text or "Quota" in text: return None
+    # Remove citations like [1], [2] form search results
+    text = text.replace("*", "").replace("_", "").replace("`", "").replace("#", "").replace('"', '')
+    import re
+    return re.sub(r'\[\d+\]', '', text) # Citations hatana
 
 def send_log_to_channel(user, request_type, query, response):
     try:
@@ -115,37 +122,29 @@ def send_log_to_channel(user, request_type, query, response):
             config = get_user_config(user.id)
             bot.send_message(
                 LOG_CHANNEL_ID, 
-                f"📝 **Log** | 👤 {user.first_name}\nMode: {config['mode']} | Voice: {config['voice']}\nTYPE: {request_type}\n❓ {query}\n🤖 {response}"
+                f"📝 **Log** | 👤 {user.first_name}\nMode: {config['mode']}\nQ: {query}\nA: {response}"
             )
     except: pass
 
-# --- 6. AUDIO SYSTEM (SAFE MODE) ---
+# --- 6. AUDIO SYSTEM ---
 def generate_audio(user_id, text, filename):
-    # Safety Check: Error message ko mat bolo
-    if not text or "Quota exceeded" in text: 
-        print("⚠️ Audio skipped: Text contained error.")
-        return False
-
+    if not text: return False
     config = get_user_config(user_id)
     engine = config.get('voice', 'edge') 
     
-    print(f"🎤 Generating Audio via: {engine.upper()}")
-
     if engine == 'edge':
         try:
             command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
             subprocess.run(command, check=True)
             return True
         except Exception as e:
-            print(f"⚠️ Edge CLI Failed: {e}")
+            print(f"⚠️ Edge Failed: {e}")
 
     try:
         tts = gTTS(text=text, lang='hi', slow=False)
         tts.save(filename)
         return True
-    except Exception as e:
-        print(f"❌ Google TTS Error: {e}")
-        return False
+    except: return False
 
 # --- 7. SETTINGS PANEL ---
 def get_settings_markup(user_id):
@@ -160,22 +159,22 @@ def get_settings_markup(user_id):
         buttons.append(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
     markup.add(*buttons)
     
-    voice_label = "🗣️ Voice: ♂️ Male (Dev)" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
+    voice_label = "🗣️ Voice: ♂️ Male" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female"
     markup.add(types.InlineKeyboardButton(voice_label, callback_data="toggle_voice"))
 
     mem_status = "✅ ON" if config['memory'] else "❌ OFF"
     markup.add(types.InlineKeyboardButton(f"🧠 Memory: {mem_status}", callback_data="toggle_memory"))
-    markup.add(types.InlineKeyboardButton("🗑️ Clear JSON (Owner)", callback_data="clear_json"))
+    markup.add(types.InlineKeyboardButton("🗑️ Clear JSON", callback_data="clear_json"))
     return markup
 
 # --- 8. SERVER ---
 @app.route('/')
-def home(): return f"✅ Dev Bot Online! Time: {get_current_time()}", 200
+def home(): return f"✅ Dev Bot Online!", 200
 
 # --- 9. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Online!**\nRaj Dev ka System.\n• `/settings` se Voice change karo.\n• 2025 ki movies ke baare mein pucho!")
+    bot.reply_to(message, "🔥 **Dev Online!**\nBol bhai kya scene hai? 😎")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -186,7 +185,7 @@ def settings_menu(message):
 def send_image_generation(message):
     prompt = message.text.replace("/img", "").replace("/image", "").strip()
     if not prompt:
-        bot.reply_to(message, "⚠️ Likh toh sahi kya banau! Ex: `/img future city`")
+        bot.reply_to(message, "⚠️ Example: `/img iron man`")
         return
     bot.send_chat_action(message.chat.id, 'upload_photo')
     try:
@@ -194,8 +193,7 @@ def send_image_generation(message):
         image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true"
         bot.send_photo(message.chat.id, image_url, caption=f"🖼️ **Generated:** {prompt}")
         send_log_to_channel(message.from_user, "IMAGE", prompt, image_url)
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+    except: bot.reply_to(message, "❌ Error creating image.")
 
 # --- 10. CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -214,14 +212,9 @@ def handle_callbacks(call):
         else: bot.answer_callback_query(call.id, "Already Active!")
 
     elif call.data == "toggle_voice":
-        if config['voice'] == 'edge':
-            config['voice'] = 'google'
-            msg = "Switched to Female"
-        else:
-            config['voice'] = 'edge'
-            msg = "Switched to Male (Dev)"
+        config['voice'] = 'google' if config['voice'] == 'edge' else 'edge'
         needs_refresh = True
-        bot.answer_callback_query(call.id, msg)
+        bot.answer_callback_query(call.id, "Voice Changed")
 
     elif call.data == "toggle_memory":
         config['memory'] = not config['memory']
@@ -244,7 +237,7 @@ def handle_callbacks(call):
             if clean_txt and generate_audio(user_id, clean_txt, filename):
                 with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
                 os.remove(filename)
-            else: bot.send_message(call.message.chat.id, "❌ Audio Error (Quota/Text Issue)")
+            else: bot.send_message(call.message.chat.id, "❌ Audio Error")
         except: pass
 
     if needs_refresh and call.data != "speak_msg":
@@ -266,26 +259,21 @@ def handle_voice_chat(message):
         if model_basic or model_search:
             myfile = genai.upload_file(user_audio_path)
             time_now = get_current_time()
-            prompt = f"Transcribe audio. If user asks about current events, USE GOOGLE SEARCH. Time: {time_now}. {RAW_MODES.get(get_user_config(user_id)['mode'])}"
+            prompt = f"System Data: Time={time_now}. Mode={get_user_config(user_id)['mode']}. INSTRUCTION: Transcribe and reply as human. Do NOT mention you are AI or searching. Direct answer."
             
             active_model = model_search if model_search else model_basic
             try:
                 result = active_model.generate_content([prompt, myfile])
                 ai_reply = result.text
-            except Exception as e:
-                if "429" in str(e): ai_reply = "⚠️ Bhai aaj ka Quota khatam. Kal aana."
-                elif active_model == model_search and model_basic:
-                    # Fallback
-                    try:
-                        result = model_basic.generate_content([prompt, myfile])
-                        ai_reply = result.text
-                    except: ai_reply = "Samajh nahi aaya."
-                else: ai_reply = "Server Error."
+            except:
+                try:
+                    result = model_basic.generate_content([prompt, myfile])
+                    ai_reply = result.text
+                except: ai_reply = "Samajh nahi aaya."
 
             reply_audio_path = f"reply_{user_id}.mp3"
             clean_txt = clean_text_for_audio(ai_reply)
             
-            # Quota Error ko TTS mat banao
             if clean_txt and generate_audio(user_id, clean_txt, reply_audio_path):
                 with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
                 os.remove(reply_audio_path)
@@ -293,11 +281,9 @@ def handle_voice_chat(message):
             
             os.remove(user_audio_path)
             send_log_to_channel(message.from_user, "VOICE", "Audio", ai_reply)
-    except Exception as e:
-        print(e)
-        bot.reply_to(message, "❌ Audio Error")
+    except: bot.reply_to(message, "❌ Audio Error")
 
-# --- 12. TEXT HANDLER (QUOTA & CRASH PROOF) ---
+# --- 12. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -314,47 +300,47 @@ def handle_text(message):
         else:
             bot.send_chat_action(message.chat.id, 'typing')
             time_now = get_current_time()
-            sys_prompt = f"Time: {time_now}. {RAW_MODES.get(config['mode'])}"
+            
+            # --- MAIN LOGIC FOR NATURAL CHAT ---
+            # Hum system ko bol rahe hain: "Search karo par muh mat kholo"
+            sys_prompt = f"""
+            [SYSTEM DATA]: Current Time: {time_now}.
+            [USER INSTRUCTION]: {RAW_MODES.get(config['mode'])}
+            [STRICT RULES]: 
+            1. If info is needed, use your internal tools silently.
+            2. NEVER say "I am searching" or "According to Google".
+            3. Answer directly as if you already knew it.
+            4. Do not mention the time unless asked.
+            """
+            
             chat_history = config['history'] if config['memory'] else []
 
-            ai_reply = "AI Down."
+            ai_reply = "System Busy."
             model_search_failed = False
             
-            # 1. Search Model Try
             if model_search:
                 try:
                     chat = model_search.start_chat(history=chat_history)
-                    response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
+                    response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
                     ai_reply = response.text
                 except Exception as e:
-                    err_msg = str(e)
-                    if "429" in err_msg:
-                        ai_reply = "⚠️ **System Alert:** Aaj ka Free Quota khatam ho gaya hai. Kal try karna."
-                        # Quota khatam toh fallback mat karo, fayda nahi
-                        model_search_failed = False 
-                    else:
-                        print(f"⚠️ Search Failed: {e}. Switching to Basic.")
-                        model_search_failed = True
-            else:
-                model_search_failed = True
+                    if "429" in str(e): ai_reply = "⚠️ Aaj ka Quota khatam."
+                    else: model_search_failed = True
+            else: model_search_failed = True
             
-            # 2. Basic Model Fallback (Only if Quota is left)
             if model_search_failed:
                 try:
                     if model_basic:
                         chat = model_basic.start_chat(history=chat_history)
-                        response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
+                        response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
                         ai_reply = response.text
-                    else: ai_reply = "Server Error."
                 except Exception as e:
-                     if "429" in str(e): ai_reply = "⚠️ **System Alert:** Aaj ka Free Quota khatam. Kal milte hain!"
-                     else: ai_reply = f"Error: {e}"
+                     if "429" in str(e): ai_reply = "⚠️ Quota khatam."
+                     else: ai_reply = "Error."
 
             source = "AI"
-            # Error messages ko yaad mat rakho
-            if "Quota" not in ai_reply and "Error" not in ai_reply:
+            if "Quota" not in ai_reply:
                 save_to_json(user_text, ai_reply) 
-                
                 if config['memory']:
                     if len(config['history']) > 10: config['history'] = config['history'][2:]
                     config['history'].append({'role': 'user', 'parts': [user_text]})
@@ -365,14 +351,11 @@ def handle_text(message):
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, reply_markup=markup)
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
-    except Exception as e: 
-        print(f"Error: {e}")
-        try: bot.reply_to(message, "System Busy.")
-        except: pass
+    except: pass
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started (Fixed Search & Quota)...")
+    print("🤖 Bot Started (Silent Search)...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
