@@ -60,27 +60,36 @@ RAW_MODES = {
     "gk": f"Tum GK expert ho. Facts batao. {SECURITY_RULE}",
 }
 
-# --- 5. AI SETUP (ROBUST FALLBACK SYSTEM) ---
+# --- 5. AI SETUP (PERFECT SEARCH + FALLBACK) ---
 model_search = None
 model_basic = None
 
 if API_KEY:
     genai.configure(api_key=API_KEY)
     
-    # 1. Basic Model (Hamesha chalega)
+    # 1. Basic Model (Backup - Hamesha ready rahega)
     try:
         model_basic = genai.GenerativeModel('gemini-2.0-flash')
+        print("✅ Basic Model Ready")
     except:
-        print("⚠️ Basic Model Init Failed")
+        print("❌ Basic Model Init Failed")
 
-    # 2. Search Model (Agar server support kare)
+    # 2. Search Model (Main)
     try:
-        # Simple tool definition try karte hain
-        tools = [{"google_search": {}}]
-        model_search = genai.GenerativeModel('gemini-2.0-flash', tools=tools)
+        # Latest Method: Dictionary use karke retrieval config set karna
+        tool_config = {
+            "google_search_retrieval": {
+                "dynamic_retrieval_config": {
+                    "mode": "dynamic",
+                    "dynamic_threshold": 0.6
+                }
+            }
+        }
+        model_search = genai.GenerativeModel('gemini-2.0-flash', tools=[tool_config])
+        print("✅ Search Model Ready")
     except Exception as e:
-        print(f"⚠️ Search Model Init Failed: {e}")
-        model_search = None # Disable search if init fails
+        print(f"⚠️ Search Init Failed: {e}. Bot will run in Basic Mode.")
+        model_search = None
 
 def get_user_config(user_id):
     if user_id not in user_data:
@@ -108,9 +117,10 @@ def send_log_to_channel(user, request_type, query, response):
     try:
         if LOG_CHANNEL_ID:
             config = get_user_config(user.id)
+            # Log message ko safe rakhne ke liye formatting hata di
             bot.send_message(
                 LOG_CHANNEL_ID, 
-                f"📝 **Log** | 👤 {user.first_name}\nMode: {config['mode']} | Voice: {config['voice']}\nTYPE: {request_type}\n❓ {query}\n🤖 {response}"
+                f"📝 LOG | {user.first_name}\nType: {request_type}\nQ: {query}\nA: {response}"
             )
     except: pass
 
@@ -264,7 +274,6 @@ def handle_voice_chat(message):
                 result = active_model.generate_content([prompt, myfile])
                 ai_reply = result.text
             except:
-                # Agar search fail ho, to basic try karo
                 if active_model == model_search and model_basic:
                     result = model_basic.generate_content([prompt, myfile])
                     ai_reply = result.text
@@ -275,7 +284,7 @@ def handle_voice_chat(message):
             if generate_audio(user_id, clean_text_for_audio(ai_reply), reply_audio_path):
                 with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
                 os.remove(reply_audio_path)
-            else: bot.reply_to(message, ai_reply)
+            else: bot.reply_to(message, ai_reply) # Safe Reply (Plain Text)
             
             os.remove(user_audio_path)
             send_log_to_channel(message.from_user, "VOICE", "Audio", ai_reply)
@@ -283,7 +292,7 @@ def handle_voice_chat(message):
         print(e)
         bot.reply_to(message, "❌ Audio Error")
 
-# --- 12. TEXT HANDLER (AUTO-SWITCHING) ---
+# --- 12. TEXT HANDLER (CRASH PROOF) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -303,28 +312,33 @@ def handle_text(message):
             sys_prompt = f"Time: {time_now}. {RAW_MODES.get(config['mode'])}"
             chat_history = config['history'] if config['memory'] else []
 
-            # --- AUTO-SWITCH LOGIC (IMPORTANT) ---
+            # --- AUTO-SWITCH LOGIC ---
             ai_reply = "AI Down."
-            try:
-                # 1. Try Search Model First
-                if model_search:
+            model_search_failed = False
+            
+            # 1. Search Model Try Karo
+            if model_search:
+                try:
                     chat = model_search.start_chat(history=chat_history)
                     response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
                     ai_reply = response.text
-                else: raise Exception("Search not available")
+                except Exception as e:
+                    print(f"⚠️ Search Failed: {e}. Switching to Basic.")
+                    model_search_failed = True
+            else:
+                model_search_failed = True
             
-            except Exception as e:
-                print(f"⚠️ Search Failed: {e}. Switching to Basic.")
-                # 2. Fallback to Basic Model (Agar search fail ho jaye)
+            # 2. Basic Model Fallback
+            if model_search_failed:
                 try:
                     if model_basic:
                         chat = model_basic.start_chat(history=chat_history)
                         response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
                         ai_reply = response.text
-                    else: ai_reply = f"Error: {e}"
-                except Exception as e2:
-                     ai_reply = f"Server Error: {e2}"
-            # -------------------------------------
+                    else: ai_reply = "Server Error: Basic model also failed."
+                except Exception as e:
+                     ai_reply = f"Error: {e}"
+            # ---------------------------
 
             source = "AI"
             save_to_json(user_text, ai_reply) 
@@ -337,15 +351,21 @@ def handle_text(message):
 
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
-        bot.reply_to(message, ai_reply, parse_mode="Markdown", reply_markup=markup)
+        
+        # ✅ CRITICAL FIX: parse_mode="Markdown" HATA DIYA hai
+        # Ab message kabhi crash nahi hoga, chahe AI kuch bhi symbol bhej de.
+        bot.reply_to(message, ai_reply, reply_markup=markup)
+        
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
     except Exception as e: 
         print(f"Error: {e}")
-        bot.reply_to(message, f"Code Error: {e}") # User ko asli error dikhao
+        # Crash rokne ke liye
+        try: bot.reply_to(message, "System Busy.")
+        except: pass
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started (Robust Mode)...")
+    print("🤖 Bot Started (Crash Proof)...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
