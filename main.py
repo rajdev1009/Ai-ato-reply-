@@ -60,35 +60,28 @@ RAW_MODES = {
     "gk": f"Tum GK expert ho. Facts batao. {SECURITY_RULE}",
 }
 
-# --- 5. AI SETUP (PERFECT SEARCH + FALLBACK) ---
+# --- 5. AI SETUP (QUOTA SAFE) ---
 model_search = None
 model_basic = None
 
 if API_KEY:
     genai.configure(api_key=API_KEY)
     
-    # 1. Basic Model (Backup - Hamesha ready rahega)
+    # 1. Basic Model
     try:
         model_basic = genai.GenerativeModel('gemini-2.0-flash')
         print("✅ Basic Model Ready")
     except:
         print("❌ Basic Model Init Failed")
 
-    # 2. Search Model (Main)
+    # 2. Search Model (FIXED TOOL NAME)
     try:
-        # Latest Method: Dictionary use karke retrieval config set karna
-        tool_config = {
-            "google_search_retrieval": {
-                "dynamic_retrieval_config": {
-                    "mode": "dynamic",
-                    "dynamic_threshold": 0.6
-                }
-            }
-        }
-        model_search = genai.GenerativeModel('gemini-2.0-flash', tools=[tool_config])
+        # Logs ke hisab se wapas purana tool name use kar rahe hain
+        tools = [{"google_search": {}}] 
+        model_search = genai.GenerativeModel('gemini-2.0-flash', tools=tools)
         print("✅ Search Model Ready")
     except Exception as e:
-        print(f"⚠️ Search Init Failed: {e}. Bot will run in Basic Mode.")
+        print(f"⚠️ Search Init Failed: {e}")
         model_search = None
 
 def get_user_config(user_id):
@@ -111,21 +104,28 @@ def save_to_json(question, answer):
 
 def clean_text_for_audio(text):
     if not text: return ""
+    # Agar text mein Error hai toh Audio mat banao
+    if "Error" in text or "Quota" in text or "429" in text:
+        return None
     return text.replace("*", "").replace("_", "").replace("`", "").replace("#", "").replace('"', '')
 
 def send_log_to_channel(user, request_type, query, response):
     try:
         if LOG_CHANNEL_ID:
             config = get_user_config(user.id)
-            # Log message ko safe rakhne ke liye formatting hata di
             bot.send_message(
                 LOG_CHANNEL_ID, 
-                f"📝 LOG | {user.first_name}\nType: {request_type}\nQ: {query}\nA: {response}"
+                f"📝 **Log** | 👤 {user.first_name}\nMode: {config['mode']} | Voice: {config['voice']}\nTYPE: {request_type}\n❓ {query}\n🤖 {response}"
             )
     except: pass
 
-# --- 6. AUDIO SYSTEM (CLI METHOD) ---
+# --- 6. AUDIO SYSTEM (SAFE MODE) ---
 def generate_audio(user_id, text, filename):
+    # Safety Check: Error message ko mat bolo
+    if not text or "Quota exceeded" in text: 
+        print("⚠️ Audio skipped: Text contained error.")
+        return False
+
     config = get_user_config(user_id)
     engine = config.get('voice', 'edge') 
     
@@ -175,7 +175,7 @@ def home(): return f"✅ Dev Bot Online! Time: {get_current_time()}", 200
 # --- 9. COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Online!**\nRaj Dev ka System.\n• `/settings` se Voice change karo.\n• Chat karo!")
+    bot.reply_to(message, "🔥 **Dev Online!**\nRaj Dev ka System.\n• `/settings` se Voice change karo.\n• 2025 ki movies ke baare mein pucho!")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -241,10 +241,10 @@ def handle_callbacks(call):
             filename = f"tts_{user_id}.mp3"
             clean_txt = clean_text_for_audio(call.message.text)
             
-            if generate_audio(user_id, clean_txt, filename):
+            if clean_txt and generate_audio(user_id, clean_txt, filename):
                 with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
                 os.remove(filename)
-            else: bot.send_message(call.message.chat.id, "❌ Audio Failed")
+            else: bot.send_message(call.message.chat.id, "❌ Audio Error (Quota/Text Issue)")
         except: pass
 
     if needs_refresh and call.data != "speak_msg":
@@ -266,25 +266,30 @@ def handle_voice_chat(message):
         if model_basic or model_search:
             myfile = genai.upload_file(user_audio_path)
             time_now = get_current_time()
-            prompt = f"Transcribe audio. Use Google Search for 2025 info. Time: {time_now}. {RAW_MODES.get(get_user_config(user_id)['mode'])}"
+            prompt = f"Transcribe audio. If user asks about current events, USE GOOGLE SEARCH. Time: {time_now}. {RAW_MODES.get(get_user_config(user_id)['mode'])}"
             
-            # --- FALLBACK LOGIC ---
             active_model = model_search if model_search else model_basic
             try:
                 result = active_model.generate_content([prompt, myfile])
                 ai_reply = result.text
-            except:
-                if active_model == model_search and model_basic:
-                    result = model_basic.generate_content([prompt, myfile])
-                    ai_reply = result.text
-                else: ai_reply = "Samajh nahi aaya."
-            # ----------------------
+            except Exception as e:
+                if "429" in str(e): ai_reply = "⚠️ Bhai aaj ka Quota khatam. Kal aana."
+                elif active_model == model_search and model_basic:
+                    # Fallback
+                    try:
+                        result = model_basic.generate_content([prompt, myfile])
+                        ai_reply = result.text
+                    except: ai_reply = "Samajh nahi aaya."
+                else: ai_reply = "Server Error."
 
             reply_audio_path = f"reply_{user_id}.mp3"
-            if generate_audio(user_id, clean_text_for_audio(ai_reply), reply_audio_path):
+            clean_txt = clean_text_for_audio(ai_reply)
+            
+            # Quota Error ko TTS mat banao
+            if clean_txt and generate_audio(user_id, clean_txt, reply_audio_path):
                 with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
                 os.remove(reply_audio_path)
-            else: bot.reply_to(message, ai_reply) # Safe Reply (Plain Text)
+            else: bot.reply_to(message, ai_reply)
             
             os.remove(user_audio_path)
             send_log_to_channel(message.from_user, "VOICE", "Audio", ai_reply)
@@ -292,7 +297,7 @@ def handle_voice_chat(message):
         print(e)
         bot.reply_to(message, "❌ Audio Error")
 
-# --- 12. TEXT HANDLER (CRASH PROOF) ---
+# --- 12. TEXT HANDLER (QUOTA & CRASH PROOF) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -312,60 +317,62 @@ def handle_text(message):
             sys_prompt = f"Time: {time_now}. {RAW_MODES.get(config['mode'])}"
             chat_history = config['history'] if config['memory'] else []
 
-            # --- AUTO-SWITCH LOGIC ---
             ai_reply = "AI Down."
             model_search_failed = False
             
-            # 1. Search Model Try Karo
+            # 1. Search Model Try
             if model_search:
                 try:
                     chat = model_search.start_chat(history=chat_history)
                     response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
                     ai_reply = response.text
                 except Exception as e:
-                    print(f"⚠️ Search Failed: {e}. Switching to Basic.")
-                    model_search_failed = True
+                    err_msg = str(e)
+                    if "429" in err_msg:
+                        ai_reply = "⚠️ **System Alert:** Aaj ka Free Quota khatam ho gaya hai. Kal try karna."
+                        # Quota khatam toh fallback mat karo, fayda nahi
+                        model_search_failed = False 
+                    else:
+                        print(f"⚠️ Search Failed: {e}. Switching to Basic.")
+                        model_search_failed = True
             else:
                 model_search_failed = True
             
-            # 2. Basic Model Fallback
+            # 2. Basic Model Fallback (Only if Quota is left)
             if model_search_failed:
                 try:
                     if model_basic:
                         chat = model_basic.start_chat(history=chat_history)
                         response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
                         ai_reply = response.text
-                    else: ai_reply = "Server Error: Basic model also failed."
+                    else: ai_reply = "Server Error."
                 except Exception as e:
-                     ai_reply = f"Error: {e}"
-            # ---------------------------
+                     if "429" in str(e): ai_reply = "⚠️ **System Alert:** Aaj ka Free Quota khatam. Kal milte hain!"
+                     else: ai_reply = f"Error: {e}"
 
             source = "AI"
-            save_to_json(user_text, ai_reply) 
-            
-            if config['memory']:
-                if len(config['history']) > 10: config['history'] = config['history'][2:]
-                config['history'].append({'role': 'user', 'parts': [user_text]})
-                try: config['history'].append({'role': 'model', 'parts': [ai_reply]})
-                except: pass
+            # Error messages ko yaad mat rakho
+            if "Quota" not in ai_reply and "Error" not in ai_reply:
+                save_to_json(user_text, ai_reply) 
+                
+                if config['memory']:
+                    if len(config['history']) > 10: config['history'] = config['history'][2:]
+                    config['history'].append({'role': 'user', 'parts': [user_text]})
+                    try: config['history'].append({'role': 'model', 'parts': [ai_reply]})
+                    except: pass
 
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
-        
-        # ✅ CRITICAL FIX: parse_mode="Markdown" HATA DIYA hai
-        # Ab message kabhi crash nahi hoga, chahe AI kuch bhi symbol bhej de.
         bot.reply_to(message, ai_reply, reply_markup=markup)
-        
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
     except Exception as e: 
         print(f"Error: {e}")
-        # Crash rokne ke liye
         try: bot.reply_to(message, "System Busy.")
         except: pass
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started (Crash Proof)...")
+    print("🤖 Bot Started (Fixed Search & Quota)...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
