@@ -1,4 +1,4 @@
-mport os
+import os
 import telebot
 from telebot import types 
 import google.generativeai as genai
