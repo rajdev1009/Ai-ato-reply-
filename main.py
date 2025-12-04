@@ -7,15 +7,12 @@ from dotenv import load_dotenv
 import threading
 import json 
 import time
-from gtts import gTTS
-import sys
-import requests 
 import urllib.parse
 from datetime import datetime
 import pytz 
-# 👇 Naye imports (Subprocess hata diya hai)
-import edge_tts
-import asyncio
+
+# 👇 Voice Logic Import kar rahe hain doosri file se
+from voice_service import generate_audio_file
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -24,9 +21,6 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_ID = 5804953849  
 LOG_CHANNEL_ID = -1003448442249 
-
-if not API_KEY or not BOT_TOKEN:
-    print("⚠️ Warning: Keys missing!")
 
 # --- 2. SETUP ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -37,34 +31,37 @@ if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 user_data = {} 
-# 👇 Default Male Voice set kar di hai
-EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
-# --- 3. TIME ---
+# --- 3. HELPER FUNCTIONS ---
 def get_current_time():
     IST = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(IST)
-    return now.strftime("%d %B %Y, %I:%M %p")
+    return datetime.now(IST).strftime("%d %B %Y, %I:%M %p")
 
-# --- 4. SECURITY & MODES ---
-SECURITY_RULE = """
-SYSTEM RULES (INTERNAL ONLY):
-1. NAME: Tumhara naam 'Dev' hai. Tum Raj Dev ke assistant ho. Lumding, Assam se.
-2. NO TECH TALK: Kabhi mat bolo ki tum "Google Search" kar rahe ho, ya tum "AI/Language Model" ho.
-3. BEHAVIOR: Insaan ki tarah baat karo.
-4. SOURCE CODE: Source code mangne par saaf mana karo ("Not for sale").
-"""
+def clean_text_for_audio(text):
+    if not text: return ""
+    if "Error" in text or "Quota" in text: return None
+    import re
+    # Remove markdown & citations [1]
+    text = re.sub(r'[*_`#]', '', text)
+    return re.sub(r'\[\d+\]', '', text)
 
+def get_user_config(user_id):
+    if user_id not in user_data:
+        # Default voice 'edge' (Male) set hai
+        user_data[user_id] = {"mode": "friendly", "memory": True, "voice": "edge", "history": []}
+    return user_data[user_id]
+
+# --- 4. MODES & PROMPTS ---
 RAW_MODES = {
-    "friendly": f"Tumhara nature Friendly aur Cool hai. Hinglish mein baat karo. {SECURITY_RULE}",
-    "study": f"Tum ek Strict Teacher ho. Padhai ke alawa koi faaltu baat mat karo. {SECURITY_RULE}",
-    "funny": f"Tum Comedian ho. Har baat mein joke maaro. {SECURITY_RULE}",
-    "roast": f"Tum Savage Roaster ho. User ki bezzati karo (Halka fulka). {SECURITY_RULE}",
-    "romantic": f"Tum Flirty ho. Bahut pyaar se baat karo. {SECURITY_RULE}",
-    "gk": f"Tum GK Expert ho. Sidha factual jawab do. {SECURITY_RULE}",
+    "friendly": "Tumhara naam Dev hai. Style: Cool, Hinglish. Don't mention AI/Google.",
+    "study": "Tum Strict Teacher ho. Only study related talks.",
+    "funny": "Tum Comedian ho. Har baat pe joke maaro.",
+    "roast": "Tum Roaster ho. User ki halki bezzati karo.",
+    "romantic": "Tum Flirty ho. Pyaar se baat karo.",
+    "gk": "Tum GK Expert ho. Factual answers only."
 }
 
-# --- 5. AI SETUP ---
+# --- 5. AI MODELS ---
 model_search = None
 model_basic = None
 
@@ -73,292 +70,147 @@ if API_KEY:
     try:
         model_basic = genai.GenerativeModel('gemini-2.0-flash')
         print("✅ Basic Model Ready")
-    except: print("❌ Basic Model Failed")
+    except: pass
 
     try:
-        tool_config = {
-            "google_search_retrieval": {
-                "dynamic_retrieval_config": {
-                    "mode": "dynamic",
-                    "dynamic_threshold": 0.6
-                }
-            }
-        }
+        tool_config = {"google_search_retrieval": {"dynamic_retrieval_config": {"mode": "dynamic", "dynamic_threshold": 0.6}}}
         model_search = genai.GenerativeModel('gemini-2.0-flash', tools=[tool_config])
         print("✅ Search Model Ready")
-    except: model_search = None
-
-def get_user_config(user_id):
-    if user_id not in user_data:
-        user_data[user_id] = {"mode": "friendly", "memory": True, "voice": "edge", "history": []}
-    return user_data[user_id]
-
-def get_reply_from_json(text):
-    try:
-        with open(JSON_FILE, "r", encoding="utf-8") as f: data = json.load(f)
-        return data.get(text.lower().strip())
-    except: return None
-
-def save_to_json(question, answer):
-    try:
-        with open(JSON_FILE, "r", encoding="utf-8") as f: data = json.load(f)
-        data[question.lower().strip()] = answer
-        with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4, ensure_ascii=False)
     except: pass
 
-def clean_text_for_audio(text):
-    if not text: return ""
-    if "Error" in text or "Quota" in text: return None
-    text = text.replace("*", "").replace("_", "").replace("`", "").replace("#", "").replace('"', '')
-    import re
-    return re.sub(r'\[\d+\]', '', text)
-
-def send_log_to_channel(user, request_type, query, response):
-    try:
-        if LOG_CHANNEL_ID:
-            config = get_user_config(user.id)
-            bot.send_message(
-                LOG_CHANNEL_ID, 
-                f"📝 **Log** | 👤 {user.first_name}\nMode: {config['mode']}\nQ: {query}\nA: {response}"
-            )
-    except: pass
-
-# --- 6. AUDIO SYSTEM (UPDATED: DIRECT LIBRARY USE) ---
-async def edge_tts_generate(text, voice, filename):
-    # Pitch aur Rate set kar rahe hain taaki voice realistic lage
-    communicate = edge_tts.Communicate(text, voice, rate="+0%", pitch="-2Hz")
-    await communicate.save(filename)
-
-def generate_audio(user_id, text, filename):
-    if not text: return False
-    config = get_user_config(user_id)
-    engine = config.get('voice', 'edge') 
-    
-    # Agar Edge (Male) voice select hai
-    if engine == 'edge':
-        try:
-            # Seedha Library use kar rahe hain (No subprocess)
-            asyncio.run(edge_tts_generate(text, EDGE_VOICE_ID, filename))
-            return True
-        except Exception as e:
-            print(f"⚠️ Edge Library Failed: {e}")
-            # Agar Edge fail hua toh neeche gTTS chalega
-
-    # Fallback: Agar Edge fail ho jaye ya user ne Google select kiya ho
-    try:
-        tts = gTTS(text=text, lang='hi', slow=False)
-        tts.save(filename)
-        return True
-    except: return False
-
-# --- 7. SETTINGS PANEL ---
-def get_settings_markup(user_id):
-    config = get_user_config(user_id)
-    curr_mode = config['mode']
-    curr_voice = config['voice']
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    buttons = []
-    for m in RAW_MODES.keys():
-        text = f"✅ {m.capitalize()}" if m == curr_mode else f"❌ {m.capitalize()}"
-        buttons.append(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
-    markup.add(*buttons)
-    
-    # Voice Button Text Update
-    voice_label = "🗣️ Voice: ♂️ Male (Edge)" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
-    markup.add(types.InlineKeyboardButton(voice_label, callback_data="toggle_voice"))
-
-    mem_status = "✅ ON" if config['memory'] else "❌ OFF"
-    markup.add(types.InlineKeyboardButton(f"🧠 Memory: {mem_status}", callback_data="toggle_memory"))
-    markup.add(types.InlineKeyboardButton("🗑️ Clear JSON", callback_data="clear_json"))
-    return markup
-
-# --- 8. SERVER ---
+# --- 6. ROUTES & COMMANDS ---
 @app.route('/')
-def home(): return f"✅ Dev Bot Online!", 200
+def home(): return "✅ Bot is Running", 200
 
-# --- 9. COMMANDS ---
 @bot.message_handler(commands=['start'])
-def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Online!**\nBol bhai kya scene hai? 😎")
+def start_msg(message):
+    bot.reply_to(message, "🔥 **Dev Online!**\nBol bhai kya haal hai? 😎")
 
 @bot.message_handler(commands=['settings'])
-def settings_menu(message):
-    markup = get_settings_markup(message.from_user.id)
-    bot.reply_to(message, "🎛️ **Control Panel**", reply_markup=markup)
+def settings_msg(message):
+    uid = message.from_user.id
+    conf = get_user_config(uid)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # Mode Buttons
+    btns = [types.InlineKeyboardButton(f"{'✅' if m==conf['mode'] else '❌'} {m.capitalize()}", callback_data=f"mode_{m}") for m in RAW_MODES]
+    markup.add(*btns)
+    
+    # Voice & Memory Buttons
+    v_txt = "🗣️ Voice: ♂️ Male" if conf['voice'] == 'edge' else "🗣️ Voice: ♀️ Female"
+    m_txt = "🧠 Memory: ON" if conf['memory'] else "🧠 Memory: OFF"
+    markup.add(types.InlineKeyboardButton(v_txt, callback_data="tog_voice"), types.InlineKeyboardButton(m_txt, callback_data="tog_mem"))
+    markup.add(types.InlineKeyboardButton("🗑️ Clear Data", callback_data="clr_json"))
+    
+    bot.reply_to(message, "⚙️ **Settings Panel**", reply_markup=markup)
 
-@bot.message_handler(commands=['img', 'image'])
-def send_image_generation(message):
-    prompt = message.text.replace("/img", "").replace("/image", "").strip()
-    if not prompt:
-        bot.reply_to(message, "⚠️ Example: `/img iron man`")
-        return
-    bot.send_chat_action(message.chat.id, 'upload_photo')
+@bot.message_handler(commands=['img'])
+def gen_image(message):
+    prompt = message.text.replace("/img", "").strip()
+    if not prompt: return bot.reply_to(message, "Likho: `/img cat in space`")
     try:
-        encoded_prompt = urllib.parse.quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true"
-        bot.send_photo(message.chat.id, image_url, caption=f"🖼️ **Generated:** {prompt}")
-        send_log_to_channel(message.from_user, "IMAGE", prompt, image_url)
-    except: bot.reply_to(message, "❌ Error creating image.")
+        url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
+        bot.send_photo(message.chat.id, url, caption=f"🎨 {prompt}")
+    except: bot.reply_to(message, "❌ Image Failed")
 
-# --- 10. CALLBACKS ---
+# --- 7. CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
-def handle_callbacks(call):
-    user_id = call.from_user.id
-    config = get_user_config(user_id)
-    needs_refresh = False 
+def callback_handler(call):
+    uid = call.from_user.id
+    conf = get_user_config(uid)
+    data = call.data
 
-    if call.data.startswith("set_mode_"):
-        new_mode = call.data.split("_")[2]
-        if config['mode'] != new_mode:
-            config['mode'] = new_mode
-            config['history'] = [] 
-            needs_refresh = True
-            bot.answer_callback_query(call.id, f"Mode: {new_mode.upper()}")
-        else: bot.answer_callback_query(call.id, "Already Active!")
+    if data.startswith("mode_"):
+        conf['mode'] = data.split("_")[1]
+        conf['history'] = []
+        bot.answer_callback_query(call.id, f"Mode: {conf['mode']}")
+        settings_msg(call.message) # Refresh UI
 
-    elif call.data == "toggle_voice":
-        config['voice'] = 'google' if config['voice'] == 'edge' else 'edge'
-        needs_refresh = True
-        bot.answer_callback_query(call.id, "Voice Changed")
+    elif data == "tog_voice":
+        conf['voice'] = 'google' if conf['voice'] == 'edge' else 'edge'
+        bot.answer_callback_query(call.id, "Voice Switched!")
+        settings_msg(call.message)
 
-    elif call.data == "toggle_memory":
-        config['memory'] = not config['memory']
-        needs_refresh = True
-        bot.answer_callback_query(call.id, "Memory Updated")
-
-    elif call.data == "clear_json":
-        if user_id == OWNER_ID:
-            with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
-            bot.answer_callback_query(call.id, "Memory Cleared!")
-        else: bot.answer_callback_query(call.id, "Access Denied!")
-
-    elif call.data == "speak_msg":
-        try:
-            bot.answer_callback_query(call.id, "🎤 Generating...")
-            bot.send_chat_action(call.message.chat.id, 'record_audio')
-            filename = f"tts_{user_id}.mp3"
-            clean_txt = clean_text_for_audio(call.message.text)
-            
-            if clean_txt and generate_audio(user_id, clean_txt, filename):
-                with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
-                os.remove(filename)
-            else: bot.send_message(call.message.chat.id, "❌ Audio Error")
-        except: pass
-
-    if needs_refresh and call.data != "speak_msg":
-        try:
-            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_markup(user_id))
-        except: pass
-
-# --- 11. VOICE HANDLER ---
-@bot.message_handler(content_types=['voice', 'audio'])
-def handle_voice_chat(message):
-    try:
-        user_id = message.from_user.id
-        bot.send_chat_action(message.chat.id, 'record_audio')
-        file_info = bot.get_file(message.voice.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        user_audio_path = f"user_{user_id}.ogg"
-        with open(user_audio_path, 'wb') as f: f.write(downloaded_file)
-
-        if model_basic or model_search:
-            myfile = genai.upload_file(user_audio_path)
-            time_now = get_current_time()
-            prompt = f"System Data: Time={time_now}. Mode={get_user_config(user_id)['mode']}. INSTRUCTION: Transcribe and reply as human. Direct answer."
-            
-            active_model = model_search if model_search else model_basic
-            try:
-                result = active_model.generate_content([prompt, myfile])
-                ai_reply = result.text
-            except:
-                try:
-                    result = model_basic.generate_content([prompt, myfile])
-                    ai_reply = result.text
-                except: ai_reply = "Samajh nahi aaya."
-
-            reply_audio_path = f"reply_{user_id}.mp3"
-            clean_txt = clean_text_for_audio(ai_reply)
-            
-            if clean_txt and generate_audio(user_id, clean_txt, reply_audio_path):
-                with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
-                os.remove(reply_audio_path)
-            else: bot.reply_to(message, ai_reply)
-            
-            os.remove(user_audio_path)
-            send_log_to_channel(message.from_user, "VOICE", "Audio", ai_reply)
-    except: bot.reply_to(message, "❌ Audio Error")
-
-# --- 12. TEXT HANDLER ---
-@bot.message_handler(func=lambda message: True)
-def handle_text(message):
-    try:
-        user_id = message.from_user.id
-        user_text = message.text
-        if not user_text: return
+    elif data == "speak_msg":
+        bot.answer_callback_query(call.id, "🎤 Processing...")
+        bot.send_chat_action(call.message.chat.id, 'record_audio')
         
-        config = get_user_config(user_id)
-        saved_reply = get_reply_from_json(user_text)
+        # 👇 Using separate file function
+        fname = f"tts_{uid}.mp3"
+        txt = clean_text_for_audio(call.message.text)
         
-        if saved_reply and config['memory']:
-            ai_reply = saved_reply
-            source = "JSON"
+        if generate_audio_file(txt, fname, conf['voice']):
+            with open(fname, "rb") as f: bot.send_voice(call.message.chat.id, f)
+            os.remove(fname)
         else:
-            bot.send_chat_action(message.chat.id, 'typing')
-            time_now = get_current_time()
-            
-            sys_prompt = f"""
-            [SYSTEM DATA]: Current Time: {time_now}.
-            [USER INSTRUCTION]: {RAW_MODES.get(config['mode'])}
-            [STRICT RULES]: 
-            1. If info is needed, use internal tools silently.
-            2. NEVER say "I am searching".
-            3. Answer directly.
-            """
-            
-            chat_history = config['history'] if config['memory'] else []
-            ai_reply = "System Busy."
-            
-            # --- AI LOGIC ---
-            model_success = False
-            if model_search:
-                try:
-                    chat = model_search.start_chat(history=chat_history)
-                    response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
-                    ai_reply = response.text
-                    model_success = True
-                except: pass
-            
-            if not model_success and model_basic:
-                try:
-                    chat = model_basic.start_chat(history=chat_history)
-                    response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
-                    ai_reply = response.text
-                except: ai_reply = "⚠️ Error connecting to AI."
+            bot.send_message(call.message.chat.id, "❌ Audio Failed")
 
-            source = "AI"
-            if "Quota" not in ai_reply:
-                save_to_json(user_text, ai_reply) 
-                if config['memory']:
-                    if len(config['history']) > 10: config['history'] = config['history'][2:]
-                    config['history'].append({'role': 'user', 'parts': [user_text]})
-                    try: config['history'].append({'role': 'model', 'parts': [ai_reply]})
-                    except: pass
+# --- 8. VOICE & TEXT CHAT ---
+@bot.message_handler(content_types=['voice', 'audio'])
+def voice_chat(message):
+    uid = message.from_user.id
+    bot.send_chat_action(message.chat.id, 'record_audio')
+    
+    # 1. Save User Voice
+    finfo = bot.get_file(message.voice.file_id)
+    dl = bot.download_file(finfo.file_path)
+    user_aud = f"user_{uid}.ogg"
+    with open(user_aud, 'wb') as f: f.write(dl)
 
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
-        bot.reply_to(message, ai_reply, reply_markup=markup)
-        send_log_to_channel(message.from_user, source, user_text, ai_reply)
+    # 2. Process with AI
+    reply_txt = "Samajh nahi aaya."
+    try:
+        model = model_search if model_search else model_basic
+        if model:
+            up_file = genai.upload_file(user_aud)
+            prompt = f"System: Mode={get_user_config(uid)['mode']}. Reply naturally in Hindi/Hinglish."
+            reply_txt = model.generate_content([prompt, up_file]).text
+    except Exception as e: reply_txt = f"Error: {e}"
+    
+    os.remove(user_aud)
+
+    # 3. Generate Reply Audio (Using Separate File)
+    fname = f"reply_{uid}.mp3"
+    cln_txt = clean_text_for_audio(reply_txt)
+    conf = get_user_config(uid)
+    
+    if generate_audio_file(cln_txt, fname, conf['voice']):
+        with open(fname, 'rb') as f: bot.send_voice(message.chat.id, f)
+        os.remove(fname)
+    else:
+        bot.reply_to(message, reply_txt)
+
+@bot.message_handler(func=lambda m: True)
+def text_chat(message):
+    uid = message.from_user.id
+    txt = message.text
+    conf = get_user_config(uid)
+    
+    # AI Logic (Simplified)
+    bot.send_chat_action(message.chat.id, 'typing')
+    sys_p = f"System: Time={get_current_time()}. Rules: {RAW_MODES[conf['mode']]}"
+    
+    reply = "System Busy."
+    try:
+        model = model_search if model_search else model_basic
+        chat = model.start_chat(history=conf['history'] if conf['memory'] else [])
+        reply = chat.send_message(f"{sys_p}\nUser: {txt}").text
     except: pass
+    
+    # Memory Update
+    if conf['memory']:
+        conf['history'].append({'role':'user','parts':[txt]})
+        conf['history'].append({'role':'model','parts':[reply]})
+
+    # Reply with Speak Button
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
+    bot.reply_to(message, reply, reply_markup=kb)
 
 # --- RUN ---
-def run_bot():
-    print("🤖 Bot Started...")
-    bot.infinity_polling()
-
 if __name__ == "__main__":
-    t = threading.Thread(target=run_bot)
+    t = threading.Thread(target=bot.infinity_polling)
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-    
+        
