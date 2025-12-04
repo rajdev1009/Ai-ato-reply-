@@ -13,7 +13,9 @@ import requests
 import urllib.parse
 from datetime import datetime
 import pytz 
-import subprocess 
+# 👇 Naye imports (Subprocess hata diya hai)
+import edge_tts
+import asyncio
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -35,7 +37,8 @@ if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 user_data = {} 
-EDGE_VOICE_ID = "hi-IN-MadhurNeural" # Male Voice
+# 👇 Default Male Voice set kar di hai
+EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
 # --- 3. TIME ---
 def get_current_time():
@@ -43,14 +46,13 @@ def get_current_time():
     now = datetime.now(IST)
     return now.strftime("%d %B %Y, %I:%M %p")
 
-# --- 4. SECURITY & MODES (STRICT HUMAN RULES) ---
+# --- 4. SECURITY & MODES ---
 SECURITY_RULE = """
 SYSTEM RULES (INTERNAL ONLY):
 1. NAME: Tumhara naam 'Dev' hai. Tum Raj Dev ke assistant ho. Lumding, Assam se.
 2. NO TECH TALK: Kabhi mat bolo ki tum "Google Search" kar rahe ho, ya tum "AI/Language Model" ho.
-3. LATEST INFO: Agar user nayi information (2025 news, movies) puche, toh internal tools use karo, lekin output mein mat likho "Searching...". Seedha information batao jaise tumhe pehle se pata ho.
-4. BEHAVIOR: Insaan ki tarah baat karo. "Main search karke batata hoon" -> GALAT. "Yeh rahi list..." -> SAHI.
-5. SOURCE CODE: Source code mangne par saaf mana karo ("Not for sale").
+3. BEHAVIOR: Insaan ki tarah baat karo.
+4. SOURCE CODE: Source code mangne par saaf mana karo ("Not for sale").
 """
 
 RAW_MODES = {
@@ -68,16 +70,12 @@ model_basic = None
 
 if API_KEY:
     genai.configure(api_key=API_KEY)
-    
-    # 1. Basic Model
     try:
         model_basic = genai.GenerativeModel('gemini-2.0-flash')
         print("✅ Basic Model Ready")
     except: print("❌ Basic Model Failed")
 
-    # 2. Search Model
     try:
-        # Tool define kar rahe hain par AI ko bolenge iska naam na le
         tool_config = {
             "google_search_retrieval": {
                 "dynamic_retrieval_config": {
@@ -111,10 +109,9 @@ def save_to_json(question, answer):
 def clean_text_for_audio(text):
     if not text: return ""
     if "Error" in text or "Quota" in text: return None
-    # Remove citations like [1], [2] form search results
     text = text.replace("*", "").replace("_", "").replace("`", "").replace("#", "").replace('"', '')
     import re
-    return re.sub(r'\[\d+\]', '', text) # Citations hatana
+    return re.sub(r'\[\d+\]', '', text)
 
 def send_log_to_channel(user, request_type, query, response):
     try:
@@ -126,20 +123,28 @@ def send_log_to_channel(user, request_type, query, response):
             )
     except: pass
 
-# --- 6. AUDIO SYSTEM ---
+# --- 6. AUDIO SYSTEM (UPDATED: DIRECT LIBRARY USE) ---
+async def edge_tts_generate(text, voice, filename):
+    # Pitch aur Rate set kar rahe hain taaki voice realistic lage
+    communicate = edge_tts.Communicate(text, voice, rate="+0%", pitch="-2Hz")
+    await communicate.save(filename)
+
 def generate_audio(user_id, text, filename):
     if not text: return False
     config = get_user_config(user_id)
     engine = config.get('voice', 'edge') 
     
+    # Agar Edge (Male) voice select hai
     if engine == 'edge':
         try:
-            command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
-            subprocess.run(command, check=True)
+            # Seedha Library use kar rahe hain (No subprocess)
+            asyncio.run(edge_tts_generate(text, EDGE_VOICE_ID, filename))
             return True
         except Exception as e:
-            print(f"⚠️ Edge Failed: {e}")
+            print(f"⚠️ Edge Library Failed: {e}")
+            # Agar Edge fail hua toh neeche gTTS chalega
 
+    # Fallback: Agar Edge fail ho jaye ya user ne Google select kiya ho
     try:
         tts = gTTS(text=text, lang='hi', slow=False)
         tts.save(filename)
@@ -159,7 +164,8 @@ def get_settings_markup(user_id):
         buttons.append(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
     markup.add(*buttons)
     
-    voice_label = "🗣️ Voice: ♂️ Male" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female"
+    # Voice Button Text Update
+    voice_label = "🗣️ Voice: ♂️ Male (Edge)" if curr_voice == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
     markup.add(types.InlineKeyboardButton(voice_label, callback_data="toggle_voice"))
 
     mem_status = "✅ ON" if config['memory'] else "❌ OFF"
@@ -259,7 +265,7 @@ def handle_voice_chat(message):
         if model_basic or model_search:
             myfile = genai.upload_file(user_audio_path)
             time_now = get_current_time()
-            prompt = f"System Data: Time={time_now}. Mode={get_user_config(user_id)['mode']}. INSTRUCTION: Transcribe and reply as human. Do NOT mention you are AI or searching. Direct answer."
+            prompt = f"System Data: Time={time_now}. Mode={get_user_config(user_id)['mode']}. INSTRUCTION: Transcribe and reply as human. Direct answer."
             
             active_model = model_search if model_search else model_basic
             try:
@@ -301,42 +307,34 @@ def handle_text(message):
             bot.send_chat_action(message.chat.id, 'typing')
             time_now = get_current_time()
             
-            # --- MAIN LOGIC FOR NATURAL CHAT ---
-            # Hum system ko bol rahe hain: "Search karo par muh mat kholo"
             sys_prompt = f"""
             [SYSTEM DATA]: Current Time: {time_now}.
             [USER INSTRUCTION]: {RAW_MODES.get(config['mode'])}
             [STRICT RULES]: 
-            1. If info is needed, use your internal tools silently.
-            2. NEVER say "I am searching" or "According to Google".
-            3. Answer directly as if you already knew it.
-            4. Do not mention the time unless asked.
+            1. If info is needed, use internal tools silently.
+            2. NEVER say "I am searching".
+            3. Answer directly.
             """
             
             chat_history = config['history'] if config['memory'] else []
-
             ai_reply = "System Busy."
-            model_search_failed = False
             
+            # --- AI LOGIC ---
+            model_success = False
             if model_search:
                 try:
                     chat = model_search.start_chat(history=chat_history)
                     response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
                     ai_reply = response.text
-                except Exception as e:
-                    if "429" in str(e): ai_reply = "⚠️ main bahut thak Gaya Hun."
-                    else: model_search_failed = True
-            else: model_search_failed = True
+                    model_success = True
+                except: pass
             
-            if model_search_failed:
+            if not model_success and model_basic:
                 try:
-                    if model_basic:
-                        chat = model_basic.start_chat(history=chat_history)
-                        response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
-                        ai_reply = response.text
-                except Exception as e:
-                     if "429" in str(e): ai_reply = "⚠️ abhi main thoda rest kar raha hun."
-                     else: ai_reply = "Error."
+                    chat = model_basic.start_chat(history=chat_history)
+                    response = chat.send_message(f"{sys_prompt}\nUser Query: {user_text}")
+                    ai_reply = response.text
+                except: ai_reply = "⚠️ Error connecting to AI."
 
             source = "AI"
             if "Quota" not in ai_reply:
@@ -355,7 +353,7 @@ def handle_text(message):
 
 # --- RUN ---
 def run_bot():
-    print("🤖 Bot Started (Silent Search)...")
+    print("🤖 Bot Started...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
@@ -363,3 +361,4 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+    
