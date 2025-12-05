@@ -14,6 +14,7 @@ import urllib.parse
 from datetime import datetime
 import pytz 
 import subprocess 
+import re # Text safai ke liye
 
 # --- IMPORT OPTIONAL MODULES ---
 try:
@@ -57,7 +58,6 @@ SYSTEM RULES:
 2. US President: Donald Trump.
 3. Name: 'Dev'. Creator: Raj Dev.
 4. LOCATION: Lumding (Assam).
-   - Famous Temples: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
 """
 
 RAW_MODES = {
@@ -124,24 +124,36 @@ def save_to_json(question, answer):
         with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4, ensure_ascii=False)
     except: pass
 
+# FIX 1: Clean Markdown function to prevent Telegram Error 400
+def clean_markdown(text):
+    if not text: return ""
+    # Star (*), Underscore (_), Backtick (`) ko hata do taaki Telegram confuse na ho
+    return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+
 def clean_text_for_audio(text):
     if not text: return ""
-    import re
-    text = text.replace("*", "").replace("#", "").replace("_", "")
-    return re.sub(r'\[\d+\]', '', text) 
+    return clean_markdown(text)
 
+# FIX 2: Robust Audio Generator
 def generate_audio(user_id, text, filename):
     if not text or len(text.strip()) == 0: return False
+    
+    # Try Edge TTS First
     try:
         command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
+        # Timeout is important
         subprocess.run(command, check=True, timeout=15) 
         return True
     except Exception as e:
+        print(f"⚠️ Edge TTS Failed, switching to Google TTS... Error: {e}")
+        # Fallback to Google TTS
         try:
             tts = gTTS(text=text, lang='hi', slow=False)
             tts.save(filename)
             return True
-        except: return False
+        except Exception as e2: 
+            print(f"❌ Both TTS Failed: {e2}")
+            return False
 
 def get_settings_markup(user_id):
     config = get_user_config(user_id)
@@ -201,7 +213,7 @@ def send_new_question(user_id, chat_id):
         "a": 0,
         "exp": "Short explanation in Hinglish"
     }}
-    Index 'a' is 0, 1, 2, or 3.
+    Index 'a' is 0, 1, 2, or 3. DO NOT USE MARKDOWN IN JSON VALUES.
     """
     
     try:
@@ -209,21 +221,26 @@ def send_new_question(user_id, chat_id):
         text = response.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(text)
         
+        # Sanitizing Data to prevent Telegram Error 400
+        safe_q = clean_markdown(data['q'])
+        safe_exp = clean_markdown(data['exp'])
+        safe_opts = [clean_markdown(o) for o in data['o']]
+
         quiz_sessions[user_id]['correct_idx'] = data['a']
-        quiz_sessions[user_id]['explanation'] = data['exp']
-        quiz_sessions[user_id]['question_text'] = data['q']
-        quiz_sessions[user_id]['options'] = data['o']
+        quiz_sessions[user_id]['explanation'] = safe_exp
+        quiz_sessions[user_id]['question_text'] = safe_q
+        quiz_sessions[user_id]['options'] = safe_opts
 
         labels = ["A", "B", "C", "D"]
         options_text = ""
-        for i, opt in enumerate(data['o']):
+        for i, opt in enumerate(safe_opts):
             options_text += f"**{labels[i]})** {opt}\n"
 
-        full_msg = f"🎮 **Quiz: {session['topic']}** | 📊 {session['level']}\n\n❓ **{data['q']}**\n\n{options_text}\n👇 *Sahi option chuno:*"
+        full_msg = f"🎮 **Quiz: {session['topic']}** | 📊 {session['level']}\n\n❓ **{safe_q}**\n\n{options_text}\n👇 *Sahi option chuno:*"
 
         markup = types.InlineKeyboardMarkup(row_width=4)
         btns = []
-        for i in range(len(data['o'])):
+        for i in range(len(safe_opts)):
             btns.append(types.InlineKeyboardButton(f" {labels[i]} ", callback_data=f"qz_ans_{i}"))
         markup.add(*btns)
         
@@ -235,8 +252,13 @@ def send_new_question(user_id, chat_id):
         
     except Exception as e:
         print(f"Quiz Error: {e}")
-        time.sleep(1) # Thoda wait karke retry
-        bot.send_message(chat_id, "⚠️ Network slow hai. Please wait.")
+        # Error aane par user ko batao, par crash mat hone do
+        try:
+            bot.send_message(chat_id, "⚠️ Question load error. Retrying...")
+            time.sleep(2)
+            send_new_question(user_id, chat_id)
+        except:
+            quiz_sessions[user_id]['active'] = False
 
 # --- 8. COMMAND HANDLERS ---
 
@@ -326,7 +348,9 @@ def handle_callbacks(call):
             
             full_speech = f"Sawal hai: {q_text}... Option A: {opts[0]}... Option B: {opts[1]}... Option C: {opts[2]}... Option D: {opts[3]}"
             
+            # Clean text for TTS
             clean_txt = clean_text_for_audio(full_speech)
+            
             if generate_audio(user_id, clean_txt, fname):
                 with open(fname, "rb") as f: bot.send_voice(call.message.chat.id, f)
                 os.remove(fname)
@@ -417,25 +441,24 @@ def handle_text(message):
         
     except Exception as e: print(e)
 
-# --- 11. RUN (ANTI-CRASH) ---
+# --- 11. RUN ---
 @app.route('/')
 def home(): return "✅ Bot Live", 200
 
 def run_bot():
     print("🤖 Bot Started...")
-    # Webhook hata do taaki conflict na ho
     try: bot.remove_webhook()
     except: pass
     
     while True:
         try:
-            # Timeout badhaya taaki 'ReadTimeout' par crash na ho
             bot.infinity_polling(timeout=60, long_polling_timeout=60)
         except Exception as e:
             print(f"⚠️ Connection Lost: {e}")
-            time.sleep(5) # 5 second ruko aur fir reconnect karo
+            time.sleep(5)
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    
