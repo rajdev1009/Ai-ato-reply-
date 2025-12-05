@@ -68,14 +68,13 @@ RAW_MODES = {
     "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. AI MODELS (FIXED) ---
+# --- 5. AI MODELS (CHANGED TO GEMINI-PRO) ---
 genai.configure(api_key=API_KEY)
 
-# Humne yahan model change kiya hai taaki error na aaye
 try:
-    # 1.5 Flash Stable hai aur free tier pe acha chalta hai
-    model_basic = genai.GenerativeModel('gemini-1.5-flash')
-    model_search = None # Abhi ke liye search band kiya hai taaki errors kam hon
+    # 'gemini-pro' sabse safe model hai, ye 404 error nahi dega
+    model_basic = genai.GenerativeModel('gemini-pro')
+    model_search = None 
 except Exception as e:
     print(f"Model Load Error: {e}")
     model_basic = None
@@ -248,13 +247,11 @@ def handle_voice_chat(message):
         user_id = message.from_user.id
         bot.send_chat_action(message.chat.id, 'record_audio')
         
-        # Download Audio
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         user_audio_path = f"user_{user_id}.ogg"
         with open(user_audio_path, 'wb') as f: f.write(downloaded_file)
 
-        # Send to Gemini
         if model_basic:
             myfile = genai.upload_file(user_audio_path)
             config = get_user_config(user_id)
@@ -266,7 +263,6 @@ def handle_voice_chat(message):
             except Exception as e:
                 ai_reply = f"Voice Error: {e}"
             
-            # Send Audio Reply
             reply_audio_path = f"reply_{user_id}.mp3"
             clean_txt = clean_text_for_audio(ai_reply)
             
@@ -304,7 +300,7 @@ def handle_links(message):
          bot.reply_to(message, f"❌ Error: {e}")
 
 
-# --- 11. TEXT HANDLER (CORE LOGIC - FIXED) ---
+# --- 11. TEXT HANDLER (CORE LOGIC) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -314,13 +310,11 @@ def handle_text(message):
         
         config = get_user_config(user_id)
         
-        # 1. Check JSON Memory
         saved_reply = get_reply_from_json(user_text)
         if saved_reply and config['memory']:
             ai_reply = saved_reply
             source = "JSON"
         else:
-            # 2. AI Processing
             bot.send_chat_action(message.chat.id, 'typing')
             
             sys_prompt = f"""
@@ -331,17 +325,15 @@ def handle_text(message):
             chat_history = config['history'] if config['memory'] else []
             
             try:
-                # Direct generation to avoid ChatSession sync errors
+                # Direct generation without chat session to avoid history bugs
                 full_prompt = f"{sys_prompt}\n\nPurani Baatein: {chat_history}\n\nUser: {user_text}"
                 response = model_basic.generate_content(full_prompt)
                 ai_reply = response.text
             except Exception as e:
-                # AB YE ERROR CHUPAYEGA NAHI, BATAYEGA
                 ai_reply = f"⚠️ Gemini Error: {str(e)}"
 
             source = "AI"
             
-            # Save to JSON & History
             if "Error" not in ai_reply:
                 save_to_json(user_text, ai_reply)
                 if config['memory']:
@@ -350,7 +342,6 @@ def handle_text(message):
                     try: config['history'].append({'role': 'model', 'parts': [ai_reply]})
                     except: pass
 
-        # Send Reply with Speak Button
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, reply_markup=markup)
@@ -360,16 +351,25 @@ def handle_text(message):
     except Exception as e:
         bot.reply_to(message, f"❌ System Error: {e}")
 
-# --- 12. RUN ---
+# --- 12. RUN (AUTO RESTART ADDED) ---
 @app.route('/')
 def home(): return "✅ Dev Bot is Fully Loaded!", 200
 
 def run_bot():
-    print("🤖 Bot Started with Fixed Features...")
-    bot.infinity_polling()
+    print("🤖 Bot Started with Auto-Reconnect...")
+    # Infinite Loop to restart bot if it crashes due to timeout
+    while True:
+        try:
+            # Timeout 90s taaki slow internet pe band na ho
+            bot.infinity_polling(timeout=90, long_polling_timeout=90)
+        except Exception as e:
+            print(f"⚠️ Network Error: {e}")
+            print("🔄 Reconnecting in 5 seconds...")
+            time.sleep(5)
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+                    
