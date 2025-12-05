@@ -18,9 +18,8 @@ import subprocess
 # --- IMPORT OPTIONAL MODULES ---
 try:
     import web_tools
-    import quiz_game
 except ImportError:
-    print("⚠️ Warning: Helper modules missing.")
+    pass
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -42,6 +41,8 @@ if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 user_data = {} 
+# Quiz State: {user_id: {'active': True, 'topic': 'GK', 'score': 0, 'last_msg': 123}}
+quiz_sessions = {} 
 EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
 # --- 3. TIME ---
@@ -50,72 +51,51 @@ def get_current_time():
     now = datetime.now(IST)
     return now.strftime("%d %B %Y, %I:%M %p")
 
-# --- 4. MODES ---
+# --- 4. MODES & PROMPTS ---
 SECURITY_RULE = """
 SYSTEM RULES:
-1. NAME: Tumhara naam 'Dev' hai.
-2. NO TECH TALK: Kabhi mat bolo ki tum AI ho. Natural baat karo.
-3. Creator: Raj Dev.
+1. Current Date: December 2025.
+2. US President: Donald Trump.
+3. Name: 'Dev'. Creator: Raj Dev.
 """
 
 RAW_MODES = {
-    "friendly": f"Tumhara nature Friendly aur Cool hai. Hinglish mein baat karo. {SECURITY_RULE}",
-    "study": f"Tum ek Strict Teacher ho. Padhai ke alawa koi faaltu baat mat karo. {SECURITY_RULE}",
-    "funny": f"Tum Comedian ho. Har baat mein joke maaro. {SECURITY_RULE}",
-    "roast": f"Tum Roast karte ho. User ki bezzati karo (limit mein). Hinglish. {SECURITY_RULE}",
-    "romantic": f"Tum Flirty ho. Bahut pyaar se baat karo. {SECURITY_RULE}",
-    "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
+    "friendly": f"Friendly & Cool. Hinglish. {SECURITY_RULE}",
+    "study": f"Strict Teacher. No nonsense. {SECURITY_RULE}",
+    "funny": f"Comedian. Jokes everywhere. {SECURITY_RULE}",
+    "gk": f"GK Expert. Factual. {SECURITY_RULE}",
 }
 
-# --- 5. UNIVERSAL MODEL LOADER (AUTO-LISTING) ---
+# --- 5. UNIVERSAL MODEL LOADER ---
 genai.configure(api_key=API_KEY)
 
 def get_working_model():
-    print("🔄 Connecting to Google to fetch YOUR available models...")
+    print("🔄 Loading AI Models...")
     try:
         my_models = []
-        # Google se pucho ki mere account par kya kya active hai
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 my_models.append(m.name)
         
-        print(f"📋 Your Account Models: {my_models}")
-
-        if not my_models:
-            print("❌ No models found! Your API Key might be invalid or restricted.")
-            return None, None
-
-        # Hamari pasand (Priority)
-        preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-pro', 'models/gemini-1.0-pro']
+        preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        selected_model = my_models[0] if my_models else None
         
-        selected_model = my_models[0] # Jo pehla mile wo lelo (Fallback)
-
-        # Agar hamari pasand ka koi model list mein hai, to wo select karo
         for pref in preferences:
             if pref in my_models:
                 selected_model = pref
                 break
         
-        print(f"✅ FINAL SELECTION: {selected_model}")
+        print(f"✅ Selected: {selected_model}")
         return genai.GenerativeModel(selected_model), selected_model
+    except: return None, None
 
-    except Exception as e:
-        print(f"⚠️ Critical Error listing models: {e}")
-        return None, None
-
-# Initialize Model
 model_basic, active_model_name = get_working_model()
 
-# Search Tool Setup
 try:
     if active_model_name and "flash" in active_model_name:
         model_search = genai.GenerativeModel(active_model_name, tools='google_search_retrieval')
-        print("✅ Search Tool Enabled!")
-    else:
-        model_search = None
-        print("ℹ️ Search Tool Disabled (Model compatibility)")
-except:
-    model_search = None
+    else: model_search = None
+except: model_search = None
 
 # --- 6. HELPER FUNCTIONS ---
 def get_user_config(user_id):
@@ -142,268 +122,239 @@ def clean_text_for_audio(text):
     text = text.replace("*", "").replace("#", "")
     return re.sub(r'\[\d+\]', '', text) 
 
-def send_log_to_channel(user, request_type, query, response):
-    try:
-        if LOG_CHANNEL_ID:
-            bot.send_message(
-                LOG_CHANNEL_ID, 
-                f"📝 **Log** | 👤 {user.first_name}\nType: {request_type}\nQ: {query}\nA: {response}"
-            )
-    except: pass
-
 def generate_audio(user_id, text, filename):
     if not text: return False
     config = get_user_config(user_id)
-    engine = config.get('voice', 'edge') 
-    
-    if engine == 'edge':
-        try:
-            command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
-            subprocess.run(command, check=True)
-            return True
-        except: pass
     
     try:
-        tts = gTTS(text=text, lang='hi', slow=False)
-        tts.save(filename)
+        command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
+        subprocess.run(command, check=True)
         return True
-    except: return False
+    except:
+        try:
+            tts = gTTS(text=text, lang='hi', slow=False)
+            tts.save(filename)
+            return True
+        except: return False
 
 def get_settings_markup(user_id):
     config = get_user_config(user_id)
-    curr_mode = config['mode']
     markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    buttons = []
     for m in RAW_MODES.keys():
-        text = f"✅ {m.capitalize()}" if m == curr_mode else f"❌ {m.capitalize()}"
-        buttons.append(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
-    markup.add(*buttons)
-    
-    voice_label = "🗣️ Voice: ♂️ Male (Edge)" if config['voice'] == 'edge' else "🗣️ Voice: ♀️ Female (Google)"
-    markup.add(types.InlineKeyboardButton(voice_label, callback_data="toggle_voice"))
-    mem_status = "✅ Memory ON" if config['memory'] else "❌ Memory OFF"
-    markup.add(types.InlineKeyboardButton(mem_status, callback_data="toggle_memory"))
-    markup.add(types.InlineKeyboardButton("🗑️ Clear JSON", callback_data="clear_json"))
+        text = f"✅ {m.capitalize()}" if m == config['mode'] else f"❌ {m.capitalize()}"
+        markup.add(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
+    markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- 7. COMMAND HANDLERS ---
-@bot.message_handler(commands=['start'])
-def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nAb main **Smart Mode** mein hoon.\nTry asking: 'Aaj ki news kya hai?'")
+# --- 7. QUIZ SYSTEM (NON-STOP LOOP) ---
+def start_quiz_loop(user_id, chat_id, topic="General Knowledge"):
+    # Set Session
+    quiz_sessions[user_id] = {'active': True, 'topic': topic, 'score': 0}
+    send_new_question(user_id, chat_id)
+
+def send_new_question(user_id, chat_id):
+    if user_id not in quiz_sessions or not quiz_sessions[user_id]['active']:
+        return
+
+    topic = quiz_sessions[user_id]['topic']
+    bot.send_chat_action(chat_id, 'typing')
+
+    prompt = f"""
+    Create a unique MCQ Quiz question about '{topic}'.
+    Reply ONLY in JSON format:
+    {{
+        "q": "Question text?",
+        "o": ["Option A", "Option B", "Option C", "Option D"],
+        "a": 0,
+        "exp": "Explanation in Hinglish"
+    }}
+    Index 'a' is 0,1,2, or 3.
+    """
+    
+    try:
+        response = model_basic.generate_content(prompt)
+        text = response.text.strip().replace("```json", "").replace("```", "")
+        data = json.loads(text)
+        
+        # Save Correct Answer in Session
+        quiz_sessions[user_id]['correct_idx'] = data['a']
+        quiz_sessions[user_id]['explanation'] = data['exp']
+        quiz_sessions[user_id]['question_text'] = data['q']
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btns = []
+        for i, opt in enumerate(data['o']):
+            btns.append(types.InlineKeyboardButton(opt, callback_data=f"qz_ans_{i}"))
+        markup.add(*btns)
+        
+        # Stop & Speak Buttons
+        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
+                   types.InlineKeyboardButton("❌ Radd Karo (Stop)", callback_data="qz_stop"))
+
+        msg = bot.send_message(chat_id, f"🎮 **Quiz Mode: On**\n\n❓ {data['q']}", reply_markup=markup)
+        quiz_sessions[user_id]['msg_id'] = msg.message_id
+        
+    except Exception as e:
+        bot.send_message(chat_id, "⚠️ Error generating question. Retrying...")
+        time.sleep(1)
+        send_new_question(user_id, chat_id)
+
+# --- 8. COMMAND HANDLERS ---
+
+# CHANGED: /start -> /raj
+@bot.message_handler(commands=['raj'])
+def send_welcome(message):
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nCommands:\n• /quiz [topic] - Non-stop Quiz\n• /settings - Control Panel\n• /img [prompt] - Generate Image\n• Ask any question for 2025 Info!")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
-    markup = get_settings_markup(message.from_user.id)
-    bot.reply_to(message, "🎛️ **Control Panel**", reply_markup=markup)
+    bot.reply_to(message, "🎛️ **Settings**", reply_markup=get_settings_markup(message.from_user.id))
 
 @bot.message_handler(commands=['img'])
-def send_image_generation(message):
+def send_image(message):
     prompt = message.text.replace("/img", "").strip()
-    if not prompt:
-        bot.reply_to(message, "⚠️ Example: `/img iron man`")
-        return
+    if not prompt: return bot.reply_to(message, "Likho: `/img cat`")
     bot.send_chat_action(message.chat.id, 'upload_photo')
     try:
-        encoded_prompt = urllib.parse.quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true"
-        bot.send_photo(message.chat.id, image_url, caption=f"🖼️ **Generated:** {prompt}")
-        send_log_to_channel(message.from_user, "IMAGE", prompt, image_url)
-    except: bot.reply_to(message, "❌ Error creating image.")
+        url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
+        bot.send_photo(message.chat.id, url, caption=f"🖼️ {prompt}")
+    except: bot.reply_to(message, "❌ Error.")
 
 @bot.message_handler(commands=['quiz'])
-def handle_quiz(message):
-    try:
-        if model_basic:
-            quiz_game.generate_quiz(bot, message, model_basic)
-        else:
-            bot.reply_to(message, "❌ AI Model not loaded.")
-    except:
-        bot.reply_to(message, "❌ Quiz module error.")
+def handle_quiz_command(message):
+    topic = message.text.replace("/quiz", "").strip()
+    if not topic: topic = "General Knowledge"
+    
+    # Check if already active
+    if message.from_user.id in quiz_sessions and quiz_sessions[message.from_user.id]['active']:
+        bot.reply_to(message, "⚠️ Quiz already chal raha hai! Stop karne ke liye button dabao.")
+    else:
+        bot.reply_to(message, f"🚀 **Starting Non-stop Quiz: {topic}**\nRukne ke liye 'Radd Karo' dabana.")
+        start_quiz_loop(message.from_user.id, message.chat.id, topic)
 
-# --- 8. CALLBACK HANDLERS ---
+# --- 9. CALLBACK HANDLER (QUIZ + SETTINGS) ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
-    if call.data.startswith("quiz_"):
-        try: quiz_game.check_answer(call, bot)
-        except: pass
+    user_id = call.from_user.id
+    
+    # --- QUIZ LOGIC ---
+    if call.data.startswith("qz_"):
+        if user_id not in quiz_sessions or not quiz_sessions[user_id]['active']:
+            bot.answer_callback_query(call.id, "⚠️ Session Expired.")
+            return
+
+        session = quiz_sessions[user_id]
+        
+        if call.data == "qz_stop":
+            quiz_sessions[user_id]['active'] = False
+            bot.edit_message_text(f"🛑 **Quiz Radd Kar Diya!**\n🏆 Final Score: {session['score']}", 
+                                  call.message.chat.id, call.message.message_id)
+            return
+
+        if call.data == "qz_speak":
+            bot.answer_callback_query(call.id, "🔊 Bol raha hoon...")
+            fname = f"q_{user_id}.mp3"
+            if generate_audio(user_id, session['question_text'], fname):
+                with open(fname, "rb") as f: bot.send_voice(call.message.chat.id, f)
+                os.remove(fname)
+            return
+
+        if call.data.startswith("qz_ans_"):
+            selected = int(call.data.split("_")[2])
+            correct = session['correct_idx']
+            
+            if selected == correct:
+                session['score'] += 1
+                result = "✅ Sahi Jawab!"
+            else:
+                result = "❌ Galat Jawab!"
+
+            # Show Result & Explanation
+            new_text = f"{call.message.text}\n\n{result}\n💡 {session['explanation']}\n\n⏳ **Agla sawal aa raha hai...**"
+            bot.edit_message_text(new_text, call.message.chat.id, call.message.message_id)
+            
+            # Wait 2 seconds and Next Question (LOOP)
+            time.sleep(2)
+            if quiz_sessions[user_id]['active']:
+                send_new_question(user_id, call.message.chat.id)
         return
 
-    user_id = call.from_user.id
-    config = get_user_config(user_id)
-    needs_refresh = False 
-
-    if call.data.startswith("set_mode_"):
-        new_mode = call.data.split("_")[2]
-        if config['mode'] != new_mode:
-            config['mode'] = new_mode
-            config['history'] = [] 
-            needs_refresh = True
-            bot.answer_callback_query(call.id, f"Mode: {new_mode.upper()}")
-
-    elif call.data == "toggle_voice":
-        config['voice'] = 'google' if config['voice'] == 'edge' else 'edge'
-        needs_refresh = True
-        bot.answer_callback_query(call.id, "Voice Changed")
-
-    elif call.data == "toggle_memory":
-        config['memory'] = not config['memory']
-        needs_refresh = True
-        bot.answer_callback_query(call.id, "Memory Updated")
-
-    elif call.data == "clear_json":
+    # --- SETTINGS LOGIC ---
+    if call.data == "clear_json":
         if user_id == OWNER_ID:
             with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
-            bot.answer_callback_query(call.id, "Memory Cleared!")
-        else: bot.answer_callback_query(call.id, "Access Denied!")
-
+            bot.answer_callback_query(call.id, "Cleared!")
+        else: bot.answer_callback_query(call.id, "Admin Only!")
+    
     elif call.data == "speak_msg":
-        try:
-            bot.answer_callback_query(call.id, "🎤 Generating...")
-            bot.send_chat_action(call.message.chat.id, 'record_audio')
-            filename = f"tts_{user_id}.mp3"
-            clean_txt = clean_text_for_audio(call.message.text)
-            if clean_txt and generate_audio(user_id, clean_txt, filename):
-                with open(filename, "rb") as audio: bot.send_voice(call.message.chat.id, audio)
-                os.remove(filename)
-            else: bot.send_message(call.message.chat.id, "❌ Audio Error")
-        except: pass
+        # Normal chat speak button
+        bot.answer_callback_query(call.id, "🔊...")
+        generate_audio(user_id, call.message.text, "tts.mp3")
+        with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
 
-    if needs_refresh:
-        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_markup(user_id))
-        except: pass
-
-# --- 9. VOICE & WEB HANDLERS ---
-@bot.message_handler(content_types=['voice', 'audio'])
-def handle_voice_chat(message):
-    try:
-        user_id = message.from_user.id
-        bot.send_chat_action(message.chat.id, 'record_audio')
-        file_info = bot.get_file(message.voice.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        user_audio_path = f"user_{user_id}.ogg"
-        with open(user_audio_path, 'wb') as f: f.write(downloaded_file)
-
-        if model_basic:
-            myfile = genai.upload_file(user_audio_path)
-            config = get_user_config(user_id)
-            prompt = f"Time: {get_current_time()}. Mode: {config['mode']}. Reply short."
-            result = model_basic.generate_content([prompt, myfile])
-            ai_reply = result.text
-            
-            reply_audio_path = f"reply_{user_id}.mp3"
-            clean_txt = clean_text_for_audio(ai_reply)
-            if clean_txt and generate_audio(user_id, clean_txt, reply_audio_path):
-                with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
-                os.remove(reply_audio_path)
-            else: bot.reply_to(message, ai_reply)
-            try: os.remove(user_audio_path)
-            except: pass
-    except Exception as e: bot.reply_to(message, "❌ Audio Error")
-
-@bot.message_handler(func=lambda m: m.text and ("http://" in m.text or "https://" in m.text))
-def handle_links(message):
-    try:
-        url = message.text.strip()
-        bot.send_chat_action(message.chat.id, 'typing')
-        content = web_tools.scrape_website(url)
-        if content and model_basic:
-            response = model_basic.generate_content(f"Summarize this website in Hinglish:\n\n{content}")
-            bot.reply_to(message, f"📄 **Summary:**\n\n{response.text}", parse_mode="Markdown")
-        else: bot.reply_to(message, "❌ Link read nahi kar paya.")
-    except: bot.reply_to(message, "❌ Error reading link.")
-
-
-# --- 10. TEXT HANDLER (FORCED SEARCH) ---
+# --- 10. TEXT HANDLER (SMART 2025 MODE) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
         user_id = message.from_user.id
+        
+        # Agar Quiz Mode ON hai, toh text ignore karo (taaki quiz beech mein na toote)
+        if user_id in quiz_sessions and quiz_sessions[user_id]['active']:
+            return
+
         user_text = message.text
         if not user_text: return
         
         config = get_user_config(user_id)
         
-        # 1. Check Memory (Offline)
+        # Trigger List for Search
+        triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner"]
+        force_search = any(x in user_text.lower() for x in triggers)
+
         saved_reply = get_reply_from_json(user_text)
-        if saved_reply and config['memory']:
+        
+        if saved_reply and config['memory'] and not force_search:
             ai_reply = saved_reply
             source = "JSON"
         else:
-            # 2. AI Processing
             bot.send_chat_action(message.chat.id, 'typing')
             
-            # --- STRONG INSTRUCTION FOR SEARCH ---
             sys_prompt = f"""
-            [System]: Today's Date: {get_current_time()}.
-            [TOOLS]: You have access to Google Search.
-            [INSTRUCTION]: If the user asks for Real-time info (News, Prices, Weather, Scores), YOU MUST USE THE SEARCH TOOL. Do not say "I cannot". Search and answer.
-            [PERSONA]: {RAW_MODES.get(config['mode'])}
+            [System]: Date: {get_current_time()}. Era: Late 2025.
+            [INSTRUCTION]: USE GOOGLE SEARCH for facts.
+            [Persona]: {RAW_MODES.get(config['mode'])}
             """
             
-            chat_history = config['history'] if config['memory'] else []
-            full_prompt = f"{sys_prompt}\n\nChat History: {chat_history}\n\nUser: {user_text}"
-
-            # HYBRID LOGIC
             try:
-                # Trigger words jo search force karenge
-                triggers = ["news", "rate", "price", "bhav", "weather", "mausam", "score", "match", "kab", "kahan", "kaun"]
-                force_search = any(x in user_text.lower() for x in triggers)
-
                 if model_search and force_search:
-                    print(f"🔎 Force Searching for: {user_text}")
-                    response = model_search.generate_content(full_prompt)
+                    response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
                     ai_reply = response.text
                 elif model_basic:
-                    response = model_basic.generate_content(full_prompt)
+                    response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
                     ai_reply = response.text
-                else:
-                    ai_reply = "❌ AI System Down. No models available."
-            except Exception as e:
-                # Fallback to basic model
-                if model_basic:
-                    try:
-                        response = model_basic.generate_content(full_prompt)
-                        ai_reply = response.text
-                    except Exception as e2:
-                        ai_reply = f"⚠️ Critical AI Error: {e2}"
-                else:
-                    ai_reply = f"⚠️ AI Error: {e}"
+                else: ai_reply = "❌ Error."
+            except Exception as e: ai_reply = f"⚠️ Error: {e}"
 
             source = "AI"
-            
-            if "Error" not in ai_reply:
-                save_to_json(user_text, ai_reply)
-                if config['memory']:
-                    if len(config['history']) > 10: config['history'] = config['history'][2:]
-                    config['history'].append({'role': 'user', 'parts': [user_text]})
-                    try: config['history'].append({'role': 'model', 'parts': [ai_reply]})
-                    except: pass
+            if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
 
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, reply_markup=markup)
         
-        send_log_to_channel(message.from_user, source, user_text, ai_reply)
+    except Exception as e: print(e)
 
-    except Exception as e:
-        bot.reply_to(message, f"❌ Bot Error: {e}")
-
-# --- 11. RUN (AUTO RESTART) ---
+# --- 11. RUN ---
 @app.route('/')
-def home(): return "✅ Dev Bot is Live!", 200
+def home(): return "✅ Bot Live", 200
 
 def run_bot():
-    print("🤖 Bot Started with UNIVERSAL MODEL LOADER...")
+    print("🤖 Bot Started...")
     while True:
-        try:
-            bot.infinity_polling(timeout=90, long_polling_timeout=90)
-        except Exception as e:
-            print(f"⚠️ Reconnecting: {e}")
-            time.sleep(5)
+        try: bot.infinity_polling(timeout=90, long_polling_timeout=90)
+        except: time.sleep(5)
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
