@@ -56,11 +56,9 @@ SYSTEM RULES:
 1. Current Date: December 2025.
 2. US President: Donald Trump.
 3. Name: 'Dev'. Creator: Raj Dev.
-4. LOCATION & ORIGIN: 
-   - Tum Lumding (Assam) ke server se chalte ho.
-   - Famous Temples in Lumding: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
-   - Famous Places: 'Dakshin Lumding Shitala Bari', 'Kailash Mandir', 'Banga Basti Patu Pathar'.
-   - Tumhen apne shahar Lumding par garv hai.
+4. LOCATION: Lumding (Assam).
+   - Famous Temples: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
+   - Famous Places: 'Dakshin Lumding Shitala Bari', 'Kailash Mandir'.
 """
 
 RAW_MODES = {
@@ -82,7 +80,8 @@ def get_working_model():
             if 'generateContent' in m.supported_generation_methods:
                 my_models.append(m.name)
         
-        preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        # Priority: 1.5 Flash is mostly stable with search
+        preferences = ['models/gemini-1.5-flash', 'models/gemini-2.5-flash', 'models/gemini-pro']
         selected_model = fallback_model
         
         if my_models:
@@ -216,7 +215,7 @@ def send_new_question(user_id, chat_id):
         quiz_sessions[user_id]['correct_idx'] = data['a']
         quiz_sessions[user_id]['explanation'] = data['exp']
         quiz_sessions[user_id]['question_text'] = data['q']
-        quiz_sessions[user_id]['options'] = data['o'] # Save options for Audio
+        quiz_sessions[user_id]['options'] = data['o']
 
         labels = ["A", "B", "C", "D"]
         options_text = ""
@@ -231,7 +230,7 @@ def send_new_question(user_id, chat_id):
             btns.append(types.InlineKeyboardButton(f" {labels[i]} ", callback_data=f"qz_ans_{i}"))
         markup.add(*btns)
         
-        markup.add(types.InlineKeyboardButton("🔊 Suno (Full)", callback_data="qz_speak"), 
+        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
                    types.InlineKeyboardButton("❌ Radd Karo", callback_data="qz_stop"))
 
         msg = bot.send_message(chat_id, full_msg, reply_markup=markup, parse_mode="Markdown")
@@ -321,16 +320,13 @@ def handle_callbacks(call):
             except: pass 
             return
 
-        # --- VOICE FIX: Speak Question + Options ---
         if call.data == "qz_speak":
             bot.answer_callback_query(call.id, "🔊 Bol raha hoon...")
             fname = f"q_{user_id}.mp3"
             
-            # Prepare Full Text
             q_text = session.get('question_text', '')
             opts = session.get('options', [])
             
-            # Text banao: Sawal aur charo option
             full_speech = f"Sawal hai: {q_text}... Option A: {opts[0]}... Option B: {opts[1]}... Option C: {opts[2]}... Option D: {opts[3]}"
             
             clean_txt = clean_text_for_audio(full_speech)
@@ -378,7 +374,7 @@ def handle_callbacks(call):
             with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
         except: pass
 
-# --- 10. TEXT HANDLER ---
+# --- 10. TEXT HANDLER (IMPROVED SEARCH TRIGGERS) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -389,7 +385,14 @@ def handle_text(message):
         if not user_text: return
         
         config = get_user_config(user_id)
-        triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live"]
+        
+        # --- NEW AGGRESSIVE TRIGGER LIST ---
+        # Ab ye Movies, Songs, Releases ke liye bhi search karega
+        triggers = [
+            "news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", 
+            "president", "winner", "live", "movie", "film", "release", "aayegi", "song", "trailer", 
+            "gold", "silver", "dollar", "bitcoin", "match", "score"
+        ]
         force_search = any(x in user_text.lower() for x in triggers)
 
         saved_reply = get_reply_from_json(user_text)
@@ -399,10 +402,20 @@ def handle_text(message):
             source = "JSON"
         else:
             bot.send_chat_action(message.chat.id, 'typing')
-            sys_prompt = f"[System]: Date: {get_current_time()}. Era: Late 2025. USE SEARCH for facts. Persona: {RAW_MODES.get(config['mode'])}"
+            
+            # --- STRICT SYSTEM PROMPT ---
+            sys_prompt = f"""
+            [System]: Date: {get_current_time()}. Era: Late 2025.
+            [INSTRUCTION]: 
+            1. If user asks about News, Movies, Dates, Prices -> USE GOOGLE SEARCH TOOL.
+            2. Do NOT hallucinate. If you don't know, search.
+            3. Persona: {RAW_MODES.get(config['mode'])}
+            """
             
             try:
+                # Agar search tool hai, toh use karo
                 if model_search and force_search:
+                    print(f"🔎 Searching for: {user_text}")
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
                 elif model_basic:
                     response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
