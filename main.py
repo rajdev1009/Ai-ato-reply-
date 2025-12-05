@@ -41,7 +41,6 @@ if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 user_data = {} 
-# Quiz State ab advance ho gaya hai
 quiz_sessions = {} 
 EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
@@ -66,11 +65,14 @@ RAW_MODES = {
     "gk": f"GK Expert. Factual. {SECURITY_RULE}",
 }
 
-# --- 5. UNIVERSAL MODEL LOADER (FIXED SEARCH ERROR) ---
+# --- 5. UNIVERSAL MODEL LOADER (CRASH PROOF) ---
 genai.configure(api_key=API_KEY)
 
 def get_working_model():
     print("🔄 Loading AI Models...")
+    # Default Fallback (Agar list fail ho jaye to ye use karo)
+    fallback_model = "gemini-1.5-flash"
+    
     try:
         my_models = []
         for m in genai.list_models():
@@ -79,24 +81,29 @@ def get_working_model():
         
         # Priority order
         preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-pro']
-        selected_model = my_models[0] if my_models else None
+        selected_model = fallback_model # Default
         
-        for pref in preferences:
-            if pref in my_models:
-                selected_model = pref
-                break
+        if my_models:
+            for pref in preferences:
+                if pref in my_models:
+                    selected_model = pref
+                    break
         
         print(f"✅ Selected: {selected_model}")
         return genai.GenerativeModel(selected_model), selected_model
-    except: return None, None
+
+    except Exception as e:
+        print(f"⚠️ Model List Error: {e}. Using Fallback.")
+        # Error aane par bhi Model Return karo (NONE nahi)
+        return genai.GenerativeModel(fallback_model), fallback_model
 
 model_basic, active_model_name = get_working_model()
 
+# Search Tool
 try:
     if active_model_name and "flash" in active_model_name:
-        # FIX: 'google_search_retrieval' ki jagah simple 'google_search'
         model_search = genai.GenerativeModel(active_model_name, tools='google_search')
-        print("✅ Search Tool Fixed & Enabled!")
+        print("✅ Search Tool Enabled!")
     else: model_search = None
 except: model_search = None
 
@@ -128,7 +135,6 @@ def clean_text_for_audio(text):
 def generate_audio(user_id, text, filename):
     if not text: return False
     config = get_user_config(user_id)
-    
     try:
         command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
         subprocess.run(command, check=True)
@@ -149,10 +155,9 @@ def get_settings_markup(user_id):
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- 7. QUIZ SYSTEM (LEVELS + EMOTIONS) ---
+# --- 7. QUIZ SYSTEM (SAFE MODE) ---
 
 def ask_quiz_level(message, topic):
-    # User se Level puchne ke liye buttons
     markup = types.InlineKeyboardMarkup(row_width=2)
     levels = [
         ("Basic Level", "Basic"), 
@@ -163,16 +168,13 @@ def ask_quiz_level(message, topic):
         ("Arts", "Arts Stream"),
         ("🔥 Pro Level", "Expert")
     ]
-    
     for label, code in levels:
         markup.add(types.InlineKeyboardButton(label, callback_data=f"qlvl_{code}"))
     
-    # Topic ko temporarily save kar lo
     quiz_sessions[message.from_user.id] = {'pending_topic': topic}
     bot.reply_to(message, f"📚 **Topic: {topic}**\n\nApna Level select karein:", reply_markup=markup)
 
 def start_quiz_loop(user_id, chat_id, topic, level):
-    # Initialize Session
     quiz_sessions[user_id] = {
         'active': True, 
         'topic': topic, 
@@ -184,7 +186,13 @@ def start_quiz_loop(user_id, chat_id, topic, level):
     send_new_question(user_id, chat_id)
 
 def send_new_question(user_id, chat_id):
-    if user_id not in quiz_sessions or not quiz_sessions[user_id]['active']:
+    # Safety Check: User hai ya nahi?
+    if user_id not in quiz_sessions: return
+    # Safety Check: Session active hai ya nahi?
+    if not quiz_sessions[user_id].get('active'): return
+    # Safety Check: Model load hua ya nahi?
+    if not model_basic:
+        bot.send_message(chat_id, "⚠️ AI Model Connect Nahi Hua. Please Wait.")
         return
 
     session = quiz_sessions[user_id]
@@ -210,12 +218,10 @@ def send_new_question(user_id, chat_id):
         text = response.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(text)
         
-        # Save Question Data
         quiz_sessions[user_id]['correct_idx'] = data['a']
         quiz_sessions[user_id]['explanation'] = data['exp']
         quiz_sessions[user_id]['question_text'] = data['q']
 
-        # UI FIX: Text message mein rahega, buttons chote rahenge
         labels = ["A", "B", "C", "D"]
         options_text = ""
         for i, opt in enumerate(data['o']):
@@ -223,14 +229,12 @@ def send_new_question(user_id, chat_id):
 
         full_msg = f"🎮 **Quiz: {topic}** | 📊 {level}\n\n❓ **{data['q']}**\n\n{options_text}\n👇 *Sahi option chuno:*"
 
-        # Buttons A, B, C, D
         markup = types.InlineKeyboardMarkup(row_width=4)
         btns = []
         for i in range(len(data['o'])):
             btns.append(types.InlineKeyboardButton(f" {labels[i]} ", callback_data=f"qz_ans_{i}"))
         markup.add(*btns)
         
-        # Control Buttons
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
                    types.InlineKeyboardButton("❌ Radd Karo (Result)", callback_data="qz_stop"))
 
@@ -238,8 +242,10 @@ def send_new_question(user_id, chat_id):
         quiz_sessions[user_id]['msg_id'] = msg.message_id
         
     except Exception as e:
-        time.sleep(1)
-        send_new_question(user_id, chat_id)
+        print(f"Quiz Gen Error: {e}")
+        # RECURSION STOP: Agar error aaya, to user ko batao aur loop band karo.
+        bot.send_message(chat_id, "⚠️ Network Error. Agla sawal nahi aa paya. Dobara try karein.")
+        quiz_sessions[user_id]['active'] = False # Loop band
 
 # --- 8. COMMAND HANDLERS ---
 
@@ -282,16 +288,14 @@ def send_image(message):
 def handle_quiz_command(message):
     topic = message.text.replace("/quiz", "").strip()
     if not topic: topic = "General Knowledge"
-    
-    # Pehle Level Pucho
     ask_quiz_level(message, topic)
 
-# --- 9. CALLBACKS (LOGIC HUB) ---
+# --- 9. CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     user_id = call.from_user.id
     
-    # --- LEVEL SELECTION ---
+    # LEVEL SELECTION
     if call.data.startswith("qlvl_"):
         if user_id not in quiz_sessions or 'pending_topic' not in quiz_sessions[user_id]:
             bot.answer_callback_query(call.id, "Session Expired. Type /quiz again.")
@@ -299,56 +303,32 @@ def handle_callbacks(call):
         
         selected_level = call.data.split("_")[1]
         topic = quiz_sessions[user_id]['pending_topic']
-        
         bot.edit_message_text(f"🚀 **Starting {selected_level} Quiz on {topic}...**", 
                               call.message.chat.id, call.message.message_id)
-        
         start_quiz_loop(user_id, call.message.chat.id, topic, selected_level)
         return
 
-    # --- QUIZ GAMEPLAY ---
+    # QUIZ GAMEPLAY
     if call.data.startswith("qz_"):
-        if user_id not in quiz_sessions or not quiz_sessions[user_id]['active']:
+        if user_id not in quiz_sessions or not quiz_sessions[user_id].get('active'):
             bot.answer_callback_query(call.id, "Quiz Khatam.")
             return
         
         session = quiz_sessions[user_id]
         
-        # STOP & SCOREBOARD LOGIC
         if call.data == "qz_stop":
             quiz_sessions[user_id]['active'] = False
-            
             score = session['score']
             total = session['total']
             wrong = session['wrong']
+            percent = int((score / total) * 100) if total > 0 else 0
             
-            # Percentage Calculation
-            if total > 0:
-                percent = int((score / total) * 100)
-            else:
-                percent = 0
-            
-            # Emotional Response Logic
-            if percent >= 90:
-                emote = "🏆 **Kya baat hai! Tum to Genius ho!** 🎉"
-            elif percent >= 70:
-                emote = "😎 **Bahut badhiya khela! Keep it up!**"
-            elif percent >= 40:
-                emote = "🙂 **Nice try! Thodi aur mehnat aur tum Pro ban jaoge.**"
-            else:
-                emote = "🥺 **Koi baat nahi dost! Gir kar hi log seekhte hain. Agli baar pakka phod denge!** ❤️"
+            if percent >= 90: emote = "🏆 **Genius! Maan gaye!** 🎉"
+            elif percent >= 70: emote = "😎 **Bahut badhiya khela!**"
+            elif percent >= 40: emote = "🙂 **Nice try! Thodi aur mehnat!**"
+            else: emote = "🥺 **Koi baat nahi! Agli baar pakka!** ❤️"
 
-            report = f"""
-🛑 **Quiz Radd Kar Diya!**
-
-📊 **Final Scoreboard:**
-✅ Sahi: {score}
-❌ Galat: {wrong}
-total: {total}
-📉 Percentage: **{percent}%**
-
-{emote}
-            """
+            report = f"🛑 **Quiz Radd!**\n\n✅ Sahi: {score}\n❌ Galat: {wrong}\n📉 Score: **{percent}%**\n\n{emote}"
             bot.edit_message_text(report, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
             return
 
@@ -360,11 +340,9 @@ total: {total}
                 os.remove(fname)
             return
 
-        # ANSWER CHECKING
         if call.data.startswith("qz_ans_"):
             selected = int(call.data.split("_")[2])
             labels = ["A", "B", "C", "D"]
-            
             session['total'] += 1
             
             if selected == session['correct_idx']:
@@ -381,11 +359,11 @@ total: {total}
                 send_new_question(user_id, call.message.chat.id)
         return
 
-    # --- SETTINGS ---
+    # SETTINGS
     if call.data == "clear_json":
         if user_id == OWNER_ID:
             with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
-            bot.answer_callback_query(call.id, "Memory Cleared!")
+            bot.answer_callback_query(call.id, "Cleared!")
         else: bot.answer_callback_query(call.id, "Admin Only!")
     
     elif call.data == "speak_msg":
@@ -404,7 +382,6 @@ def handle_text(message):
         if not user_text: return
         
         config = get_user_config(user_id)
-        
         triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live"]
         force_search = any(x in user_text.lower() for x in triggers)
 
@@ -450,4 +427,4 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-                    
+        
