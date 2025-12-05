@@ -68,16 +68,58 @@ RAW_MODES = {
     "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. AI MODELS (CHANGED TO GEMINI-PRO) ---
+# --- 5. AI MODELS (AUTO DETECT SYSTEM) ---
 genai.configure(api_key=API_KEY)
 
-try:
-    # 'gemini-pro' sabse safe model hai, ye 404 error nahi dega
-    model_basic = genai.GenerativeModel('gemini-pro')
-    model_search = None 
-except Exception as e:
-    print(f"Model Load Error: {e}")
-    model_basic = None
+def configure_model():
+    """
+    Ye function check karega ki kaunsa model available hai.
+    Error aane par ye automatically 'pro' ya 'flash' switch kar lega.
+    """
+    print("🔄 Checking Available Models...")
+    try:
+        # Google se pucho kya available hai
+        available = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available.append(m.name)
+        
+        print(f"📋 Available Models: {available}")
+
+        # Hamari pasand (Priority List)
+        priorities = [
+            'models/gemini-1.5-flash',
+            'models/gemini-1.5-flash-latest',
+            'models/gemini-1.0-pro',
+            'models/gemini-pro',
+            'models/gemini-1.5-pro'
+        ]
+        
+        selected_model_name = "models/gemini-1.5-flash" # Default Fallback
+
+        # Check karo priority mein se kaunsa list mein hai
+        found = False
+        for p in priorities:
+            if p in available:
+                selected_model_name = p
+                found = True
+                break
+        
+        # Agar priority mein se kuch nahi mila, toh pehla available utha lo
+        if not found and available:
+            selected_model_name = available[0]
+
+        print(f"✅ Selected Model: {selected_model_name}")
+        return genai.GenerativeModel(selected_model_name)
+
+    except Exception as e:
+        print(f"⚠️ Model Detect Error: {e}")
+        # Agar list_models fail ho jaye, to jabardasti flash use karo
+        return genai.GenerativeModel('gemini-1.5-flash')
+
+# Model Initialize karo
+model_basic = configure_model()
+model_search = None 
 
 # --- 6. HELPER FUNCTIONS ---
 def get_user_config(user_id):
@@ -325,7 +367,7 @@ def handle_text(message):
             chat_history = config['history'] if config['memory'] else []
             
             try:
-                # Direct generation without chat session to avoid history bugs
+                # Direct generation to avoid history issues
                 full_prompt = f"{sys_prompt}\n\nPurani Baatein: {chat_history}\n\nUser: {user_text}"
                 response = model_basic.generate_content(full_prompt)
                 ai_reply = response.text
@@ -351,19 +393,18 @@ def handle_text(message):
     except Exception as e:
         bot.reply_to(message, f"❌ System Error: {e}")
 
-# --- 12. RUN (AUTO RESTART ADDED) ---
+# --- 12. RUN (AUTO RECONNECT) ---
 @app.route('/')
 def home(): return "✅ Dev Bot is Fully Loaded!", 200
 
 def run_bot():
-    print("🤖 Bot Started with Auto-Reconnect...")
-    # Infinite Loop to restart bot if it crashes due to timeout
+    print("🤖 Bot Started with Model Auto-Detect...")
     while True:
         try:
-            # Timeout 90s taaki slow internet pe band na ho
+            # 90 second timeout for slow networks
             bot.infinity_polling(timeout=90, long_polling_timeout=90)
         except Exception as e:
-            print(f"⚠️ Network Error: {e}")
+            print(f"⚠️ Network/API Error: {e}")
             print("🔄 Reconnecting in 5 seconds...")
             time.sleep(5)
 
@@ -372,4 +413,4 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-                    
+            
