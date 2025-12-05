@@ -20,7 +20,7 @@ try:
     import web_tools
     import quiz_game
 except ImportError:
-    print("⚠️ Warning: 'web_tools.py' or 'quiz_game.py' missing. Quiz/Web features won't work.")
+    print("⚠️ Warning: 'web_tools.py' or 'quiz_game.py' missing.")
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -42,7 +42,7 @@ if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 user_data = {} 
-EDGE_VOICE_ID = "hi-IN-MadhurNeural" # Male Voice
+EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
 # --- 3. TIME ---
 def get_current_time():
@@ -50,13 +50,12 @@ def get_current_time():
     now = datetime.now(IST)
     return now.strftime("%d %B %Y, %I:%M %p")
 
-# --- 4. MODES & PERSONAS ---
+# --- 4. MODES ---
 SECURITY_RULE = """
 SYSTEM RULES:
 1. NAME: Tumhara naam 'Dev' hai.
 2. NO TECH TALK: Kabhi mat bolo ki tum AI ho. Natural baat karo.
-3. LATEST INFO: Internal tools use karo par user ko mat batao ki search kar rahe ho.
-4. Tumhen agar koi puche kisne banaya tabhi bolna tumhen Raj dev Ne banaya.
+3. Creator: Raj Dev.
 """
 
 RAW_MODES = {
@@ -68,58 +67,23 @@ RAW_MODES = {
     "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. AI MODELS (AUTO DETECT SYSTEM) ---
+# --- 5. AI MODELS (HYBRID SYSTEM) ---
 genai.configure(api_key=API_KEY)
 
-def configure_model():
-    """
-    Ye function check karega ki kaunsa model available hai.
-    Error aane par ye automatically 'pro' ya 'flash' switch kar lega.
-    """
-    print("🔄 Checking Available Models...")
-    try:
-        # Google se pucho kya available hai
-        available = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available.append(m.name)
-        
-        print(f"📋 Available Models: {available}")
+# 1. Basic Model (Fast, No Search)
+try:
+    model_basic = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    model_basic = genai.GenerativeModel('gemini-pro')
 
-        # Hamari pasand (Priority List)
-        priorities = [
-            'models/gemini-1.5-flash',
-            'models/gemini-1.5-flash-latest',
-            'models/gemini-1.0-pro',
-            'models/gemini-pro',
-            'models/gemini-1.5-pro'
-        ]
-        
-        selected_model_name = "models/gemini-1.5-flash" # Default Fallback
-
-        # Check karo priority mein se kaunsa list mein hai
-        found = False
-        for p in priorities:
-            if p in available:
-                selected_model_name = p
-                found = True
-                break
-        
-        # Agar priority mein se kuch nahi mila, toh pehla available utha lo
-        if not found and available:
-            selected_model_name = available[0]
-
-        print(f"✅ Selected Model: {selected_model_name}")
-        return genai.GenerativeModel(selected_model_name)
-
-    except Exception as e:
-        print(f"⚠️ Model Detect Error: {e}")
-        # Agar list_models fail ho jaye, to jabardasti flash use karo
-        return genai.GenerativeModel('gemini-1.5-flash')
-
-# Model Initialize karo
-model_basic = configure_model()
-model_search = None 
+# 2. Search Model (Slow, Has Internet)
+try:
+    # Ye tool Google Search enable karta hai
+    model_search = genai.GenerativeModel('gemini-1.5-flash', tools='google_search_retrieval')
+    print("✅ Google Search Tool Activated!")
+except Exception as e:
+    print(f"⚠️ Search Tool Failed: {e}")
+    model_search = None
 
 # --- 6. HELPER FUNCTIONS ---
 def get_user_config(user_id):
@@ -195,7 +159,7 @@ def get_settings_markup(user_id):
 
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nFeatures:\n• Chat & Voice\n• /img [prompt]\n• /quiz [topic]\n• Send Links for Summary\n• /settings for modes")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nAb main **Internet News** bhi bata sakta hoon!\nTry asking: 'Aaj ki news kya hai?'")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -216,27 +180,21 @@ def send_image_generation(message):
         send_log_to_channel(message.from_user, "IMAGE", prompt, image_url)
     except: bot.reply_to(message, "❌ Error creating image.")
 
-# --- NEW: QUIZ HANDLER ---
 @bot.message_handler(commands=['quiz'])
 def handle_quiz(message):
     try:
         quiz_game.generate_quiz(bot, message, model_basic)
-    except NameError:
-        bot.reply_to(message, "❌ Quiz module missing.")
-    except Exception as e:
-        bot.reply_to(message, f"❌ Quiz Error: {e}")
+    except:
+        bot.reply_to(message, "❌ Quiz module error.")
 
-# --- 8. CALLBACK HANDLER (SETTINGS & QUIZ) ---
+# --- 8. CALLBACK HANDLERS ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
-    # Handle Quiz Answers
     if call.data.startswith("quiz_"):
-        try:
-            quiz_game.check_answer(call, bot)
+        try: quiz_game.check_answer(call, bot)
         except: pass
         return
 
-    # Handle Settings
     user_id = call.from_user.id
     config = get_user_config(user_id)
     needs_refresh = False 
@@ -278,17 +236,15 @@ def handle_callbacks(call):
         except: pass
 
     if needs_refresh:
-        try:
-            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_markup(user_id))
+        try: bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_markup(user_id))
         except: pass
 
-# --- 9. VOICE HANDLER ---
+# --- 9. VOICE & WEB HANDLERS ---
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_voice_chat(message):
     try:
         user_id = message.from_user.id
         bot.send_chat_action(message.chat.id, 'record_audio')
-        
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         user_audio_path = f"user_{user_id}.ogg"
@@ -297,52 +253,34 @@ def handle_voice_chat(message):
         if model_basic:
             myfile = genai.upload_file(user_audio_path)
             config = get_user_config(user_id)
-            prompt = f"Time: {get_current_time()}. Persona: {RAW_MODES[config['mode']]}. Reply as spoken response."
-            
-            try:
-                result = model_basic.generate_content([prompt, myfile])
-                ai_reply = result.text
-            except Exception as e:
-                ai_reply = f"Voice Error: {e}"
+            prompt = f"Time: {get_current_time()}. Mode: {config['mode']}. Reply short."
+            result = model_basic.generate_content([prompt, myfile])
+            ai_reply = result.text
             
             reply_audio_path = f"reply_{user_id}.mp3"
             clean_txt = clean_text_for_audio(ai_reply)
-            
             if clean_txt and generate_audio(user_id, clean_txt, reply_audio_path):
                 with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
                 os.remove(reply_audio_path)
             else: bot.reply_to(message, ai_reply)
-            
             try: os.remove(user_audio_path)
             except: pass
-            send_log_to_channel(message.from_user, "VOICE", "Audio", ai_reply)
-    except Exception as e:
-        bot.reply_to(message, f"❌ Audio Critical Error: {e}")
+    except Exception as e: bot.reply_to(message, "❌ Audio Error")
 
-# --- 10. NEW: WEB/LINK HANDLER ---
 @bot.message_handler(func=lambda m: m.text and ("http://" in m.text or "https://" in m.text))
 def handle_links(message):
     try:
         url = message.text.strip()
         bot.send_chat_action(message.chat.id, 'typing')
-        status_msg = bot.reply_to(message, "🌐 Checking link...")
-        
         content = web_tools.scrape_website(url)
-        if not content:
-            bot.edit_message_text("❌ Website read nahi kar paaya.", message.chat.id, status_msg.message_id)
-            return
-
-        prompt = f"Read this website content and summarize it in Hinglish:\n\n{content}"
-        response = model_basic.generate_content(prompt)
-        bot.edit_message_text(f"📄 **Summary:**\n\n{response.text}", message.chat.id, status_msg.message_id, parse_mode="Markdown")
-        send_log_to_channel(message.from_user, "WEB_LINK", url, response.text)
-    except NameError:
-         bot.reply_to(message, "❌ Web Tool module missing.")
-    except Exception as e:
-         bot.reply_to(message, f"❌ Error: {e}")
+        if content:
+            response = model_basic.generate_content(f"Summarize this website in Hinglish:\n\n{content}")
+            bot.reply_to(message, f"📄 **Summary:**\n\n{response.text}", parse_mode="Markdown")
+        else: bot.reply_to(message, "❌ Link read nahi kar paya.")
+    except: bot.reply_to(message, "❌ Error reading link.")
 
 
-# --- 11. TEXT HANDLER (CORE LOGIC) ---
+# --- 10. TEXT HANDLER (HYBRID LOGIC) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -352,27 +290,31 @@ def handle_text(message):
         
         config = get_user_config(user_id)
         
+        # 1. Check Memory (Offline)
         saved_reply = get_reply_from_json(user_text)
         if saved_reply and config['memory']:
             ai_reply = saved_reply
             source = "JSON"
         else:
+            # 2. AI Processing
             bot.send_chat_action(message.chat.id, 'typing')
-            
-            sys_prompt = f"""
-            [System]: Time: {get_current_time()}.
-            [Instruction]: {RAW_MODES.get(config['mode'])}
-            """
-            
+            sys_prompt = f"[System]: Date: {get_current_time()}. Mode: {RAW_MODES.get(config['mode'])}"
             chat_history = config['history'] if config['memory'] else []
-            
+            full_prompt = f"{sys_prompt}\n\nChat History: {chat_history}\n\nUser: {user_text}"
+
+            # HYBRID LOGIC: Try Search First, Fallback to Basic
             try:
-                # Direct generation to avoid history issues
-                full_prompt = f"{sys_prompt}\n\nPurani Baatein: {chat_history}\n\nUser: {user_text}"
+                # Agar search tool available hai aur query news jaisi hai
+                if model_search:
+                    response = model_search.generate_content(full_prompt)
+                    ai_reply = response.text
+                else:
+                    raise Exception("Search unavailable")
+            except Exception as e:
+                # Fallback to basic model (Stable)
+                print(f"Search Failed, Using Basic: {e}")
                 response = model_basic.generate_content(full_prompt)
                 ai_reply = response.text
-            except Exception as e:
-                ai_reply = f"⚠️ Gemini Error: {str(e)}"
 
             source = "AI"
             
@@ -391,21 +333,19 @@ def handle_text(message):
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
 
     except Exception as e:
-        bot.reply_to(message, f"❌ System Error: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
 
-# --- 12. RUN (AUTO RECONNECT) ---
+# --- 11. RUN (AUTO RESTART) ---
 @app.route('/')
-def home(): return "✅ Dev Bot is Fully Loaded!", 200
+def home(): return "✅ Dev Bot is Live!", 200
 
 def run_bot():
-    print("🤖 Bot Started with Model Auto-Detect...")
+    print("🤖 Bot Started with HYBRID MODE...")
     while True:
         try:
-            # 90 second timeout for slow networks
             bot.infinity_polling(timeout=90, long_polling_timeout=90)
         except Exception as e:
-            print(f"⚠️ Network/API Error: {e}")
-            print("🔄 Reconnecting in 5 seconds...")
+            print(f"⚠️ Reconnecting: {e}")
             time.sleep(5)
 
 if __name__ == "__main__":
@@ -413,4 +353,4 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-            
+    
