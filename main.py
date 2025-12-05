@@ -15,12 +15,12 @@ from datetime import datetime
 import pytz 
 import subprocess 
 
-# --- IMPORT NEW MODULES ---
+# --- IMPORT OPTIONAL MODULES ---
 try:
     import web_tools
     import quiz_game
 except ImportError:
-    print("⚠️ Warning: 'web_tools.py' or 'quiz_game.py' missing.")
+    print("⚠️ Warning: Helper modules missing.")
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
@@ -67,22 +67,50 @@ RAW_MODES = {
     "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. AI MODELS (HYBRID SYSTEM) ---
+# --- 5. UNIVERSAL MODEL LOADER (The Fix) ---
 genai.configure(api_key=API_KEY)
 
-# 1. Basic Model (Fast, No Search)
-try:
-    model_basic = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    model_basic = genai.GenerativeModel('gemini-pro')
+def get_working_model():
+    # List of all possible model names to try
+    # Agar pehla fail hua, to dusra try karega, fir teesra...
+    candidates = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-pro",
+        "gemini-1.0-pro",
+        "models/gemini-1.5-flash",
+        "models/gemini-pro"
+    ]
+    
+    print("🔄 Testing AI Models...")
+    
+    for model_name in candidates:
+        try:
+            # Test connection
+            test_model = genai.GenerativeModel(model_name)
+            response = test_model.generate_content("Hi")
+            if response:
+                print(f"✅ Success! Connected to: {model_name}")
+                return test_model, model_name
+        except Exception as e:
+            print(f"❌ Failed ({model_name}): {e}")
+            continue
+            
+    print("⚠️ CRITICAL: No models worked. Using fallback.")
+    return None, None
 
-# 2. Search Model (Slow, Has Internet)
+# Initialize the best working model
+model_basic, active_model_name = get_working_model()
+
+# Search Tool Setup (Optional)
 try:
-    # Ye tool Google Search enable karta hai
-    model_search = genai.GenerativeModel('gemini-1.5-flash', tools='google_search_retrieval')
-    print("✅ Google Search Tool Activated!")
-except Exception as e:
-    print(f"⚠️ Search Tool Failed: {e}")
+    if active_model_name and "flash" in active_model_name:
+        model_search = genai.GenerativeModel(active_model_name, tools='google_search_retrieval')
+        print("✅ Search Tool Enabled!")
+    else:
+        model_search = None
+        print("ℹ️ Search Tool Disabled (Model not compatible)")
+except:
     model_search = None
 
 # --- 6. HELPER FUNCTIONS ---
@@ -156,10 +184,9 @@ def get_settings_markup(user_id):
     return markup
 
 # --- 7. COMMAND HANDLERS ---
-
 @bot.message_handler(commands=['start'])
 def send_start(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nAb main **Internet News** bhi bata sakta hoon!\nTry asking: 'Aaj ki news kya hai?'")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nAb main **Smart Mode** mein hoon.\nTry asking: 'Aaj ki news kya hai?'")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -183,7 +210,10 @@ def send_image_generation(message):
 @bot.message_handler(commands=['quiz'])
 def handle_quiz(message):
     try:
-        quiz_game.generate_quiz(bot, message, model_basic)
+        if model_basic:
+            quiz_game.generate_quiz(bot, message, model_basic)
+        else:
+            bot.reply_to(message, "❌ AI Model not loaded.")
     except:
         bot.reply_to(message, "❌ Quiz module error.")
 
@@ -273,7 +303,7 @@ def handle_links(message):
         url = message.text.strip()
         bot.send_chat_action(message.chat.id, 'typing')
         content = web_tools.scrape_website(url)
-        if content:
+        if content and model_basic:
             response = model_basic.generate_content(f"Summarize this website in Hinglish:\n\n{content}")
             bot.reply_to(message, f"📄 **Summary:**\n\n{response.text}", parse_mode="Markdown")
         else: bot.reply_to(message, "❌ Link read nahi kar paya.")
@@ -302,19 +332,28 @@ def handle_text(message):
             chat_history = config['history'] if config['memory'] else []
             full_prompt = f"{sys_prompt}\n\nChat History: {chat_history}\n\nUser: {user_text}"
 
-            # HYBRID LOGIC: Try Search First, Fallback to Basic
+            # HYBRID LOGIC
             try:
-                # Agar search tool available hai aur query news jaisi hai
+                # Try search if available
                 if model_search:
                     response = model_search.generate_content(full_prompt)
                     ai_reply = response.text
+                elif model_basic:
+                    # Fallback to Basic
+                    response = model_basic.generate_content(full_prompt)
+                    ai_reply = response.text
                 else:
-                    raise Exception("Search unavailable")
+                    ai_reply = "❌ AI System Down."
             except Exception as e:
-                # Fallback to basic model (Stable)
-                print(f"Search Failed, Using Basic: {e}")
-                response = model_basic.generate_content(full_prompt)
-                ai_reply = response.text
+                # If Search fails, fallback to basic
+                if model_basic:
+                    try:
+                        response = model_basic.generate_content(full_prompt)
+                        ai_reply = response.text
+                    except Exception as e2:
+                        ai_reply = f"⚠️ Critical AI Error: {e2}"
+                else:
+                    ai_reply = f"⚠️ AI Error: {e}"
 
             source = "AI"
             
@@ -333,14 +372,14 @@ def handle_text(message):
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+        bot.reply_to(message, f"❌ Bot Error: {e}")
 
 # --- 11. RUN (AUTO RESTART) ---
 @app.route('/')
 def home(): return "✅ Dev Bot is Live!", 200
 
 def run_bot():
-    print("🤖 Bot Started with HYBRID MODE...")
+    print("🤖 Bot Started with UNIVERSAL MODEL LOADER...")
     while True:
         try:
             bot.infinity_polling(timeout=90, long_polling_timeout=90)
@@ -353,4 +392,4 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-    
+        
