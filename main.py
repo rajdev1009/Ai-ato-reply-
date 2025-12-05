@@ -41,7 +41,7 @@ if not os.path.exists(JSON_FILE):
     with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
 
 user_data = {} 
-# Quiz State: {user_id: {'active': True, 'topic': 'GK', 'score': 0, 'last_msg': 123}}
+# Quiz State ab advance ho gaya hai
 quiz_sessions = {} 
 EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
@@ -66,7 +66,7 @@ RAW_MODES = {
     "gk": f"GK Expert. Factual. {SECURITY_RULE}",
 }
 
-# --- 5. UNIVERSAL MODEL LOADER ---
+# --- 5. UNIVERSAL MODEL LOADER (FIXED SEARCH ERROR) ---
 genai.configure(api_key=API_KEY)
 
 def get_working_model():
@@ -77,6 +77,7 @@ def get_working_model():
             if 'generateContent' in m.supported_generation_methods:
                 my_models.append(m.name)
         
+        # Priority order
         preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-pro']
         selected_model = my_models[0] if my_models else None
         
@@ -93,7 +94,9 @@ model_basic, active_model_name = get_working_model()
 
 try:
     if active_model_name and "flash" in active_model_name:
-        model_search = genai.GenerativeModel(active_model_name, tools='google_search_retrieval')
+        # FIX: 'google_search_retrieval' ki jagah simple 'google_search'
+        model_search = genai.GenerativeModel(active_model_name, tools='google_search')
+        print("✅ Search Tool Fixed & Enabled!")
     else: model_search = None
 except: model_search = None
 
@@ -146,29 +149,60 @@ def get_settings_markup(user_id):
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- 7. QUIZ SYSTEM (NON-STOP LOOP) ---
-def start_quiz_loop(user_id, chat_id, topic="General Knowledge"):
-    # Set Session
-    quiz_sessions[user_id] = {'active': True, 'topic': topic, 'score': 0}
+# --- 7. QUIZ SYSTEM (LEVELS + EMOTIONS) ---
+
+def ask_quiz_level(message, topic):
+    # User se Level puchne ke liye buttons
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    levels = [
+        ("Basic Level", "Basic"), 
+        ("Junior (9-10)", "Class 9-10"),
+        ("Senior (11-12)", "Class 11-12"),
+        ("Science", "Science Stream"),
+        ("Commerce", "Commerce Stream"),
+        ("Arts", "Arts Stream"),
+        ("🔥 Pro Level", "Expert")
+    ]
+    
+    for label, code in levels:
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"qlvl_{code}"))
+    
+    # Topic ko temporarily save kar lo
+    quiz_sessions[message.from_user.id] = {'pending_topic': topic}
+    bot.reply_to(message, f"📚 **Topic: {topic}**\n\nApna Level select karein:", reply_markup=markup)
+
+def start_quiz_loop(user_id, chat_id, topic, level):
+    # Initialize Session
+    quiz_sessions[user_id] = {
+        'active': True, 
+        'topic': topic, 
+        'level': level,
+        'score': 0,
+        'total': 0,
+        'wrong': 0
+    }
     send_new_question(user_id, chat_id)
 
 def send_new_question(user_id, chat_id):
     if user_id not in quiz_sessions or not quiz_sessions[user_id]['active']:
         return
 
-    topic = quiz_sessions[user_id]['topic']
+    session = quiz_sessions[user_id]
+    topic = session['topic']
+    level = session['level']
+    
     bot.send_chat_action(chat_id, 'typing')
 
     prompt = f"""
-    Create a unique MCQ Quiz question about '{topic}'.
-    Reply ONLY in JSON format:
+    Create a {level} level MCQ Question about '{topic}'.
+    Reply ONLY in JSON:
     {{
         "q": "Question text?",
-        "o": ["Option A", "Option B", "Option C", "Option D"],
+        "o": ["Option 1", "Option 2", "Option 3", "Option 4"],
         "a": 0,
-        "exp": "Explanation in Hinglish"
+        "exp": "Short explanation in Hinglish"
     }}
-    Index 'a' is 0,1,2, or 3.
+    Index 'a' is 0, 1, 2, or 3.
     """
     
     try:
@@ -176,35 +210,59 @@ def send_new_question(user_id, chat_id):
         text = response.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(text)
         
-        # Save Correct Answer in Session
+        # Save Question Data
         quiz_sessions[user_id]['correct_idx'] = data['a']
         quiz_sessions[user_id]['explanation'] = data['exp']
         quiz_sessions[user_id]['question_text'] = data['q']
 
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        btns = []
+        # UI FIX: Text message mein rahega, buttons chote rahenge
+        labels = ["A", "B", "C", "D"]
+        options_text = ""
         for i, opt in enumerate(data['o']):
-            btns.append(types.InlineKeyboardButton(opt, callback_data=f"qz_ans_{i}"))
+            options_text += f"**{labels[i]})** {opt}\n"
+
+        full_msg = f"🎮 **Quiz: {topic}** | 📊 {level}\n\n❓ **{data['q']}**\n\n{options_text}\n👇 *Sahi option chuno:*"
+
+        # Buttons A, B, C, D
+        markup = types.InlineKeyboardMarkup(row_width=4)
+        btns = []
+        for i in range(len(data['o'])):
+            btns.append(types.InlineKeyboardButton(f" {labels[i]} ", callback_data=f"qz_ans_{i}"))
         markup.add(*btns)
         
-        # Stop & Speak Buttons
+        # Control Buttons
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
-                   types.InlineKeyboardButton("❌ Radd Karo (Stop)", callback_data="qz_stop"))
+                   types.InlineKeyboardButton("❌ Radd Karo (Result)", callback_data="qz_stop"))
 
-        msg = bot.send_message(chat_id, f"🎮 **Quiz Mode: On**\n\n❓ {data['q']}", reply_markup=markup)
+        msg = bot.send_message(chat_id, full_msg, reply_markup=markup, parse_mode="Markdown")
         quiz_sessions[user_id]['msg_id'] = msg.message_id
         
     except Exception as e:
-        bot.send_message(chat_id, "⚠️ Error generating question. Retrying...")
         time.sleep(1)
         send_new_question(user_id, chat_id)
 
 # --- 8. COMMAND HANDLERS ---
 
-# CHANGED: /start -> /raj
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nCommands:\n• /quiz [topic] - Non-stop Quiz\n• /settings - Control Panel\n• /img [prompt] - Generate Image\n• Ask any question for 2025 Info!")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nNaye Quiz Feature ke saath!\nUse `/help` to see commands.")
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    help_text = """
+🤖 **Dev Bot Commands List:**
+
+1️⃣ **/raj** - Check Bot Status.
+2️⃣ **/quiz [topic]** - Start Level-wise Quiz.
+   *(Eg: /quiz history, /quiz math)*
+3️⃣ **/img [prompt]** - Generate Images.
+4️⃣ **/settings** - Change Mode/Clear Memory.
+
+💡 **Smart Features:**
+- Ask "News", "Price" for 2025 Info.
+- Quiz mein ab **Levels** aur **Scoreboard** hai!
+    """
+    bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['settings'])
 def settings_menu(message):
@@ -213,7 +271,7 @@ def settings_menu(message):
 @bot.message_handler(commands=['img'])
 def send_image(message):
     prompt = message.text.replace("/img", "").strip()
-    if not prompt: return bot.reply_to(message, "Likho: `/img cat`")
+    if not prompt: return bot.reply_to(message, "Likho: `/img car`")
     bot.send_chat_action(message.chat.id, 'upload_photo')
     try:
         url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
@@ -225,90 +283,129 @@ def handle_quiz_command(message):
     topic = message.text.replace("/quiz", "").strip()
     if not topic: topic = "General Knowledge"
     
-    # Check if already active
-    if message.from_user.id in quiz_sessions and quiz_sessions[message.from_user.id]['active']:
-        bot.reply_to(message, "⚠️ Quiz already chal raha hai! Stop karne ke liye button dabao.")
-    else:
-        bot.reply_to(message, f"🚀 **Starting Non-stop Quiz: {topic}**\nRukne ke liye 'Radd Karo' dabana.")
-        start_quiz_loop(message.from_user.id, message.chat.id, topic)
+    # Pehle Level Pucho
+    ask_quiz_level(message, topic)
 
-# --- 9. CALLBACK HANDLER (QUIZ + SETTINGS) ---
+# --- 9. CALLBACKS (LOGIC HUB) ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     user_id = call.from_user.id
     
-    # --- QUIZ LOGIC ---
+    # --- LEVEL SELECTION ---
+    if call.data.startswith("qlvl_"):
+        if user_id not in quiz_sessions or 'pending_topic' not in quiz_sessions[user_id]:
+            bot.answer_callback_query(call.id, "Session Expired. Type /quiz again.")
+            return
+        
+        selected_level = call.data.split("_")[1]
+        topic = quiz_sessions[user_id]['pending_topic']
+        
+        bot.edit_message_text(f"🚀 **Starting {selected_level} Quiz on {topic}...**", 
+                              call.message.chat.id, call.message.message_id)
+        
+        start_quiz_loop(user_id, call.message.chat.id, topic, selected_level)
+        return
+
+    # --- QUIZ GAMEPLAY ---
     if call.data.startswith("qz_"):
         if user_id not in quiz_sessions or not quiz_sessions[user_id]['active']:
-            bot.answer_callback_query(call.id, "⚠️ Session Expired.")
+            bot.answer_callback_query(call.id, "Quiz Khatam.")
             return
-
+        
         session = quiz_sessions[user_id]
         
+        # STOP & SCOREBOARD LOGIC
         if call.data == "qz_stop":
             quiz_sessions[user_id]['active'] = False
-            bot.edit_message_text(f"🛑 **Quiz Radd Kar Diya!**\n🏆 Final Score: {session['score']}", 
-                                  call.message.chat.id, call.message.message_id)
+            
+            score = session['score']
+            total = session['total']
+            wrong = session['wrong']
+            
+            # Percentage Calculation
+            if total > 0:
+                percent = int((score / total) * 100)
+            else:
+                percent = 0
+            
+            # Emotional Response Logic
+            if percent >= 90:
+                emote = "🏆 **Kya baat hai! Tum to Genius ho!** 🎉"
+            elif percent >= 70:
+                emote = "😎 **Bahut badhiya khela! Keep it up!**"
+            elif percent >= 40:
+                emote = "🙂 **Nice try! Thodi aur mehnat aur tum Pro ban jaoge.**"
+            else:
+                emote = "🥺 **Koi baat nahi dost! Gir kar hi log seekhte hain. Agli baar pakka phod denge!** ❤️"
+
+            report = f"""
+🛑 **Quiz Radd Kar Diya!**
+
+📊 **Final Scoreboard:**
+✅ Sahi: {score}
+❌ Galat: {wrong}
+total: {total}
+📉 Percentage: **{percent}%**
+
+{emote}
+            """
+            bot.edit_message_text(report, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
             return
 
         if call.data == "qz_speak":
-            bot.answer_callback_query(call.id, "🔊 Bol raha hoon...")
+            bot.answer_callback_query(call.id, "🔊...")
             fname = f"q_{user_id}.mp3"
             if generate_audio(user_id, session['question_text'], fname):
                 with open(fname, "rb") as f: bot.send_voice(call.message.chat.id, f)
                 os.remove(fname)
             return
 
+        # ANSWER CHECKING
         if call.data.startswith("qz_ans_"):
             selected = int(call.data.split("_")[2])
-            correct = session['correct_idx']
+            labels = ["A", "B", "C", "D"]
             
-            if selected == correct:
+            session['total'] += 1
+            
+            if selected == session['correct_idx']:
                 session['score'] += 1
-                result = "✅ Sahi Jawab!"
+                result = f"✅ **Sahi Jawab!** (Ans: {labels[session['correct_idx']]})"
             else:
-                result = "❌ Galat Jawab!"
+                session['wrong'] += 1
+                result = f"❌ **Galat!** Sahi tha: {labels[session['correct_idx']]}"
 
-            # Show Result & Explanation
-            new_text = f"{call.message.text}\n\n{result}\n💡 {session['explanation']}\n\n⏳ **Agla sawal aa raha hai...**"
-            bot.edit_message_text(new_text, call.message.chat.id, call.message.message_id)
-            
-            # Wait 2 seconds and Next Question (LOOP)
+            bot.edit_message_text(f"{result}\n💡 {session['explanation']}\n\n⏳ **Agla sawal...**", 
+                                  call.message.chat.id, call.message.message_id, parse_mode="Markdown")
             time.sleep(2)
             if quiz_sessions[user_id]['active']:
                 send_new_question(user_id, call.message.chat.id)
         return
 
-    # --- SETTINGS LOGIC ---
+    # --- SETTINGS ---
     if call.data == "clear_json":
         if user_id == OWNER_ID:
             with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
-            bot.answer_callback_query(call.id, "Cleared!")
+            bot.answer_callback_query(call.id, "Memory Cleared!")
         else: bot.answer_callback_query(call.id, "Admin Only!")
     
     elif call.data == "speak_msg":
-        # Normal chat speak button
         bot.answer_callback_query(call.id, "🔊...")
         generate_audio(user_id, call.message.text, "tts.mp3")
         with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
 
-# --- 10. TEXT HANDLER (SMART 2025 MODE) ---
+# --- 10. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
         user_id = message.from_user.id
-        
-        # Agar Quiz Mode ON hai, toh text ignore karo (taaki quiz beech mein na toote)
-        if user_id in quiz_sessions and quiz_sessions[user_id]['active']:
-            return
+        if user_id in quiz_sessions and quiz_sessions[user_id].get('active'): return
 
         user_text = message.text
         if not user_text: return
         
         config = get_user_config(user_id)
         
-        # Trigger List for Search
-        triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner"]
+        triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live"]
         force_search = any(x in user_text.lower() for x in triggers)
 
         saved_reply = get_reply_from_json(user_text)
@@ -318,22 +415,17 @@ def handle_text(message):
             source = "JSON"
         else:
             bot.send_chat_action(message.chat.id, 'typing')
-            
-            sys_prompt = f"""
-            [System]: Date: {get_current_time()}. Era: Late 2025.
-            [INSTRUCTION]: USE GOOGLE SEARCH for facts.
-            [Persona]: {RAW_MODES.get(config['mode'])}
-            """
+            sys_prompt = f"[System]: Date: {get_current_time()}. Era: Late 2025. USE SEARCH for facts. Persona: {RAW_MODES.get(config['mode'])}"
             
             try:
                 if model_search and force_search:
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                    ai_reply = response.text
                 elif model_basic:
                     response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                    ai_reply = response.text
-                else: ai_reply = "❌ Error."
-            except Exception as e: ai_reply = f"⚠️ Error: {e}"
+                else: response = None
+                
+                ai_reply = response.text if response else "❌ Error."
+            except Exception as e: ai_reply = f"⚠️ {e}"
 
             source = "AI"
             if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
@@ -358,3 +450,4 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+                    
