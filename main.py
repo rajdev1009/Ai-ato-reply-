@@ -86,7 +86,7 @@ def get_working_model():
             return None, None
 
         # Hamari pasand (Priority)
-        preferences = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-pro', 'models/gemini-1.0-pro']
+        preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-pro', 'models/gemini-1.0-pro']
         
         selected_model = my_models[0] # Jo pehla mile wo lelo (Fallback)
 
@@ -314,7 +314,7 @@ def handle_links(message):
     except: bot.reply_to(message, "❌ Error reading link.")
 
 
-# --- 10. TEXT HANDLER (HYBRID LOGIC) ---
+# --- 10. TEXT HANDLER (FORCED SEARCH) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -332,13 +332,26 @@ def handle_text(message):
         else:
             # 2. AI Processing
             bot.send_chat_action(message.chat.id, 'typing')
-            sys_prompt = f"[System]: Date: {get_current_time()}. Mode: {RAW_MODES.get(config['mode'])}"
+            
+            # --- STRONG INSTRUCTION FOR SEARCH ---
+            sys_prompt = f"""
+            [System]: Today's Date: {get_current_time()}.
+            [TOOLS]: You have access to Google Search.
+            [INSTRUCTION]: If the user asks for Real-time info (News, Prices, Weather, Scores), YOU MUST USE THE SEARCH TOOL. Do not say "I cannot". Search and answer.
+            [PERSONA]: {RAW_MODES.get(config['mode'])}
+            """
+            
             chat_history = config['history'] if config['memory'] else []
             full_prompt = f"{sys_prompt}\n\nChat History: {chat_history}\n\nUser: {user_text}"
 
             # HYBRID LOGIC
             try:
-                if model_search:
+                # Trigger words jo search force karenge
+                triggers = ["news", "rate", "price", "bhav", "weather", "mausam", "score", "match", "kab", "kahan", "kaun"]
+                force_search = any(x in user_text.lower() for x in triggers)
+
+                if model_search and force_search:
+                    print(f"🔎 Force Searching for: {user_text}")
                     response = model_search.generate_content(full_prompt)
                     ai_reply = response.text
                 elif model_basic:
@@ -347,7 +360,7 @@ def handle_text(message):
                 else:
                     ai_reply = "❌ AI System Down. No models available."
             except Exception as e:
-                # Fallback
+                # Fallback to basic model
                 if model_basic:
                     try:
                         response = model_basic.generate_content(full_prompt)
@@ -394,4 +407,3 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-        
