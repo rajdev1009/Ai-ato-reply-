@@ -71,12 +71,12 @@ RAW_MODES = {
 
 # --- 5. AI MODELS ---
 genai.configure(api_key=API_KEY)
-model_basic = genai.GenerativeModel('gemini-2.0-flash')
+model_basic = genai.GenerativeModel('gemini-1.5-flash')
 
 # Search capability wala model setup
 try:
     tool_config = {"google_search_retrieval": {"dynamic_retrieval_config": {"mode": "dynamic", "dynamic_threshold": 0.6}}}
-    model_search = genai.GenerativeModel('gemini-2.0-flash', tools=[tool_config])
+    model_search = genai.GenerativeModel('gemini-1.5-flash', tools=[tool_config])
 except:
     model_search = None
 
