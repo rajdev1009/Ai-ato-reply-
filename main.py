@@ -16,7 +16,6 @@ import pytz
 import subprocess 
 
 # --- IMPORT NEW MODULES ---
-# Make sure web_tools.py and quiz_game.py are in the same folder
 try:
     import web_tools
     import quiz_game
@@ -69,16 +68,17 @@ RAW_MODES = {
     "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. AI MODELS ---
+# --- 5. AI MODELS (FIXED) ---
 genai.configure(api_key=API_KEY)
-model_basic = genai.GenerativeModel('gemini-1.5-flash')
 
-# Search capability wala model setup
+# Humne yahan model change kiya hai taaki error na aaye
 try:
-    tool_config = {"google_search_retrieval": {"dynamic_retrieval_config": {"mode": "dynamic", "dynamic_threshold": 0.6}}}
-    model_search = genai.GenerativeModel('gemini-1.5-flash', tools=[tool_config])
-except:
-    model_search = None
+    # 1.5 Flash Stable hai aur free tier pe acha chalta hai
+    model_basic = genai.GenerativeModel('gemini-1.5-flash')
+    model_search = None # Abhi ke liye search band kiya hai taaki errors kam hon
+except Exception as e:
+    print(f"Model Load Error: {e}")
+    model_basic = None
 
 # --- 6. HELPER FUNCTIONS ---
 def get_user_config(user_id):
@@ -108,7 +108,6 @@ def clean_text_for_audio(text):
 def send_log_to_channel(user, request_type, query, response):
     try:
         if LOG_CHANNEL_ID:
-            config = get_user_config(user.id)
             bot.send_message(
                 LOG_CHANNEL_ID, 
                 f"📝 **Log** | 👤 {user.first_name}\nType: {request_type}\nQ: {query}\nA: {response}"
@@ -183,6 +182,8 @@ def handle_quiz(message):
         quiz_game.generate_quiz(bot, message, model_basic)
     except NameError:
         bot.reply_to(message, "❌ Quiz module missing.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Quiz Error: {e}")
 
 # --- 8. CALLBACK HANDLER (SETTINGS & QUIZ) ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -262,7 +263,8 @@ def handle_voice_chat(message):
             try:
                 result = model_basic.generate_content([prompt, myfile])
                 ai_reply = result.text
-            except: ai_reply = "Voice samajh nahi aayi."
+            except Exception as e:
+                ai_reply = f"Voice Error: {e}"
             
             # Send Audio Reply
             reply_audio_path = f"reply_{user_id}.mp3"
@@ -273,9 +275,11 @@ def handle_voice_chat(message):
                 os.remove(reply_audio_path)
             else: bot.reply_to(message, ai_reply)
             
-            os.remove(user_audio_path)
+            try: os.remove(user_audio_path)
+            except: pass
             send_log_to_channel(message.from_user, "VOICE", "Audio", ai_reply)
-    except: bot.reply_to(message, "❌ Audio Error")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Audio Critical Error: {e}")
 
 # --- 10. NEW: WEB/LINK HANDLER ---
 @bot.message_handler(func=lambda m: m.text and ("http://" in m.text or "https://" in m.text))
@@ -300,7 +304,7 @@ def handle_links(message):
          bot.reply_to(message, f"❌ Error: {e}")
 
 
-# --- 11. TEXT HANDLER (CORE LOGIC) ---
+# --- 11. TEXT HANDLER (CORE LOGIC - FIXED) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -326,19 +330,19 @@ def handle_text(message):
             
             chat_history = config['history'] if config['memory'] else []
             
-            # Try Search Model first, then Basic
             try:
-                active_model = model_search if model_search else model_basic
-                chat = active_model.start_chat(history=chat_history)
-                response = chat.send_message(f"{sys_prompt}\nUser: {user_text}")
+                # Direct generation to avoid ChatSession sync errors
+                full_prompt = f"{sys_prompt}\n\nPurani Baatein: {chat_history}\n\nUser: {user_text}"
+                response = model_basic.generate_content(full_prompt)
                 ai_reply = response.text
             except Exception as e:
-                ai_reply = "⚠️ Error or Busy."
+                # AB YE ERROR CHUPAYEGA NAHI, BATAYEGA
+                ai_reply = f"⚠️ Gemini Error: {str(e)}"
 
             source = "AI"
             
             # Save to JSON & History
-            if "Quota" not in ai_reply:
+            if "Error" not in ai_reply:
                 save_to_json(user_text, ai_reply)
                 if config['memory']:
                     if len(config['history']) > 10: config['history'] = config['history'][2:]
@@ -354,14 +358,14 @@ def handle_text(message):
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
 
     except Exception as e:
-        print(f"Error: {e}")
+        bot.reply_to(message, f"❌ System Error: {e}")
 
 # --- 12. RUN ---
 @app.route('/')
 def home(): return "✅ Dev Bot is Fully Loaded!", 200
 
 def run_bot():
-    print("🤖 Bot Started with ALL Features...")
+    print("🤖 Bot Started with Fixed Features...")
     bot.infinity_polling()
 
 if __name__ == "__main__":
@@ -369,4 +373,3 @@ if __name__ == "__main__":
     t.start()
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
-    
