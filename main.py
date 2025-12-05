@@ -50,7 +50,7 @@ def get_current_time():
     now = datetime.now(IST)
     return now.strftime("%d %B %Y, %I:%M %p")
 
-# --- 4. MODES & PROMPTS (LUMDING INFO ADDED) ---
+# --- 4. MODES & PROMPTS ---
 SECURITY_RULE = """
 SYSTEM RULES:
 1. Current Date: December 2025.
@@ -58,7 +58,6 @@ SYSTEM RULES:
 3. Name: 'Dev'. Creator: Raj Dev.
 4. LOCATION: Lumding (Assam).
    - Famous Temples: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
-   - Famous Places: 'Dakshin Lumding Shitala Bari', 'Kailash Mandir'.
 """
 
 RAW_MODES = {
@@ -80,8 +79,7 @@ def get_working_model():
             if 'generateContent' in m.supported_generation_methods:
                 my_models.append(m.name)
         
-        # Priority: 1.5 Flash is mostly stable with search
-        preferences = ['models/gemini-1.5-flash', 'models/gemini-2.5-flash', 'models/gemini-pro']
+        preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-pro']
         selected_model = fallback_model
         
         if my_models:
@@ -139,7 +137,6 @@ def generate_audio(user_id, text, filename):
         subprocess.run(command, check=True, timeout=15) 
         return True
     except Exception as e:
-        print(f"⚠️ Edge TTS Failed, switching to Google TTS...")
         try:
             tts = gTTS(text=text, lang='hi', slow=False)
             tts.save(filename)
@@ -238,8 +235,8 @@ def send_new_question(user_id, chat_id):
         
     except Exception as e:
         print(f"Quiz Error: {e}")
-        bot.send_message(chat_id, "⚠️ Network glitch. Dobara try karein.")
-        quiz_sessions[user_id]['active'] = False
+        time.sleep(1) # Thoda wait karke retry
+        bot.send_message(chat_id, "⚠️ Network slow hai. Please wait.")
 
 # --- 8. COMMAND HANDLERS ---
 
@@ -374,7 +371,7 @@ def handle_callbacks(call):
             with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
         except: pass
 
-# --- 10. TEXT HANDLER (IMPROVED SEARCH TRIGGERS) ---
+# --- 10. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -385,14 +382,7 @@ def handle_text(message):
         if not user_text: return
         
         config = get_user_config(user_id)
-        
-        # --- NEW AGGRESSIVE TRIGGER LIST ---
-        # Ab ye Movies, Songs, Releases ke liye bhi search karega
-        triggers = [
-            "news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", 
-            "president", "winner", "live", "movie", "film", "release", "aayegi", "song", "trailer", 
-            "gold", "silver", "dollar", "bitcoin", "match", "score"
-        ]
+        triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live", "movie", "film", "release", "aayegi"]
         force_search = any(x in user_text.lower() for x in triggers)
 
         saved_reply = get_reply_from_json(user_text)
@@ -402,20 +392,14 @@ def handle_text(message):
             source = "JSON"
         else:
             bot.send_chat_action(message.chat.id, 'typing')
-            
-            # --- STRICT SYSTEM PROMPT ---
             sys_prompt = f"""
             [System]: Date: {get_current_time()}. Era: Late 2025.
-            [INSTRUCTION]: 
-            1. If user asks about News, Movies, Dates, Prices -> USE GOOGLE SEARCH TOOL.
-            2. Do NOT hallucinate. If you don't know, search.
-            3. Persona: {RAW_MODES.get(config['mode'])}
+            [INSTRUCTION]: USE GOOGLE SEARCH for Facts/News.
+            [Persona]: {RAW_MODES.get(config['mode'])}
             """
             
             try:
-                # Agar search tool hai, toh use karo
                 if model_search and force_search:
-                    print(f"🔎 Searching for: {user_text}")
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
                 elif model_basic:
                     response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
@@ -433,18 +417,25 @@ def handle_text(message):
         
     except Exception as e: print(e)
 
-# --- 11. RUN ---
+# --- 11. RUN (ANTI-CRASH) ---
 @app.route('/')
 def home(): return "✅ Bot Live", 200
 
 def run_bot():
     print("🤖 Bot Started...")
+    # Webhook hata do taaki conflict na ho
+    try: bot.remove_webhook()
+    except: pass
+    
     while True:
-        try: bot.infinity_polling(timeout=90, long_polling_timeout=90)
-        except: time.sleep(5)
+        try:
+            # Timeout badhaya taaki 'ReadTimeout' par crash na ho
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"⚠️ Connection Lost: {e}")
+            time.sleep(5) # 5 second ruko aur fir reconnect karo
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-        
