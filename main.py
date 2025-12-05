@@ -67,49 +67,53 @@ RAW_MODES = {
     "gk": f"Tum GK Expert ho. Factual jawab do. {SECURITY_RULE}",
 }
 
-# --- 5. UNIVERSAL MODEL LOADER (The Fix) ---
+# --- 5. UNIVERSAL MODEL LOADER (AUTO-LISTING) ---
 genai.configure(api_key=API_KEY)
 
 def get_working_model():
-    # List of all possible model names to try
-    # Agar pehla fail hua, to dusra try karega, fir teesra...
-    candidates = [
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-pro",
-        "gemini-1.0-pro",
-        "models/gemini-1.5-flash",
-        "models/gemini-pro"
-    ]
-    
-    print("🔄 Testing AI Models...")
-    
-    for model_name in candidates:
-        try:
-            # Test connection
-            test_model = genai.GenerativeModel(model_name)
-            response = test_model.generate_content("Hi")
-            if response:
-                print(f"✅ Success! Connected to: {model_name}")
-                return test_model, model_name
-        except Exception as e:
-            print(f"❌ Failed ({model_name}): {e}")
-            continue
-            
-    print("⚠️ CRITICAL: No models worked. Using fallback.")
-    return None, None
+    print("🔄 Connecting to Google to fetch YOUR available models...")
+    try:
+        my_models = []
+        # Google se pucho ki mere account par kya kya active hai
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                my_models.append(m.name)
+        
+        print(f"📋 Your Account Models: {my_models}")
 
-# Initialize the best working model
+        if not my_models:
+            print("❌ No models found! Your API Key might be invalid or restricted.")
+            return None, None
+
+        # Hamari pasand (Priority)
+        preferences = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-pro', 'models/gemini-1.0-pro']
+        
+        selected_model = my_models[0] # Jo pehla mile wo lelo (Fallback)
+
+        # Agar hamari pasand ka koi model list mein hai, to wo select karo
+        for pref in preferences:
+            if pref in my_models:
+                selected_model = pref
+                break
+        
+        print(f"✅ FINAL SELECTION: {selected_model}")
+        return genai.GenerativeModel(selected_model), selected_model
+
+    except Exception as e:
+        print(f"⚠️ Critical Error listing models: {e}")
+        return None, None
+
+# Initialize Model
 model_basic, active_model_name = get_working_model()
 
-# Search Tool Setup (Optional)
+# Search Tool Setup
 try:
     if active_model_name and "flash" in active_model_name:
         model_search = genai.GenerativeModel(active_model_name, tools='google_search_retrieval')
         print("✅ Search Tool Enabled!")
     else:
         model_search = None
-        print("ℹ️ Search Tool Disabled (Model not compatible)")
+        print("ℹ️ Search Tool Disabled (Model compatibility)")
 except:
     model_search = None
 
@@ -334,18 +338,16 @@ def handle_text(message):
 
             # HYBRID LOGIC
             try:
-                # Try search if available
                 if model_search:
                     response = model_search.generate_content(full_prompt)
                     ai_reply = response.text
                 elif model_basic:
-                    # Fallback to Basic
                     response = model_basic.generate_content(full_prompt)
                     ai_reply = response.text
                 else:
-                    ai_reply = "❌ AI System Down."
+                    ai_reply = "❌ AI System Down. No models available."
             except Exception as e:
-                # If Search fails, fallback to basic
+                # Fallback
                 if model_basic:
                     try:
                         response = model_basic.generate_content(full_prompt)
