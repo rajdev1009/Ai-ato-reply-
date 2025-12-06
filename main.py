@@ -27,11 +27,16 @@ load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_ID = 5804953849  
-LOG_CHANNEL_ID = -1003448442249 
+OWNER_ID = 5804953849 
+
+# Log Channel ID Fix
+try:
+    LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+except:
+    LOG_CHANNEL_ID = None
 
 if not API_KEY or not BOT_TOKEN:
-    print("⚠️ Warning: Keys missing in .env file!")
+    print("⚠️ Warning: Keys missing!")
 
 # --- 2. SETUP ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -43,6 +48,7 @@ if not os.path.exists(JSON_FILE):
 
 user_data = {} 
 quiz_sessions = {} 
+quiz_timers = {} 
 EDGE_VOICE_ID = "hi-IN-MadhurNeural" 
 
 # --- 3. TIME ---
@@ -55,12 +61,10 @@ def get_current_time():
 SECURITY_RULE = """
 SYSTEM RULES:
 1. Current Date: December 2025.
-2. Tum opinions nahi doge. to AI nahin ho.
-3. Tum sirf facts ya jo main bolun woh follow karoge.
-4. Agar main 'details mode on' bolun tab hi tum apna details bataao doge.
-5. US President: Donald Trump.
-6. Name: 'Dev'. Creator: Raj Dev.
-7. LOCATION: Lumding (Assam).
+2. US President: Donald Trump.
+3. Name: 'Dev'. Creator: Raj Dev.
+4. LOCATION: Lumding (Assam).
+   - Famous Temples: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
 """
 
 RAW_MODES = {
@@ -100,7 +104,6 @@ def get_working_model():
 
 model_basic, active_model_name = get_working_model()
 
-# Search Tool
 try:
     if active_model_name and "flash" in active_model_name:
         model_search = genai.GenerativeModel(active_model_name, tools='google_search')
@@ -152,13 +155,28 @@ def get_settings_markup(user_id):
     config = get_user_config(user_id)
     markup = types.InlineKeyboardMarkup(row_width=2)
     for m in RAW_MODES.keys():
-        # Checkmark Logic
         text = f"✅ {m.capitalize()}" if m == config['mode'] else f"❌ {m.capitalize()}"
         markup.add(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- 7. QUIZ SYSTEM ---
+def send_log_to_channel(user, request_type, query, response):
+    if not LOG_CHANNEL_ID: return
+    def _log():
+        try:
+            clean_response = response[:100] + "..." if len(response) > 100 else response
+            log_text = (
+                f"📝 **Log Update**\n"
+                f"👤 **User:** {user.first_name} (ID: {user.id})\n"
+                f"🤖 **Type:** {request_type}\n"
+                f"❓ **Q:** {query}\n"
+                f"✅ **A:** {clean_response}"
+            )
+            bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="Markdown")
+        except: pass
+    threading.Thread(target=_log).start()
+
+# --- 7. QUIZ SYSTEM (LEVELS + TIME SELECTOR) ---
 
 def ask_quiz_level(message, topic):
     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -177,16 +195,46 @@ def ask_quiz_level(message, topic):
     quiz_sessions[message.from_user.id] = {'pending_topic': topic}
     bot.reply_to(message, f"📚 **Topic: {topic}**\n\nApna Level select karein:", reply_markup=markup)
 
-def start_quiz_loop(user_id, chat_id, topic, level):
+def ask_quiz_timer(message):
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    # Time Options
+    times = [
+        ("🚀 10s", "10"), ("⚡ 15s", "15"), ("⏱️ 30s", "30"),
+        ("⏳ 45s", "45"), ("🐢 1 Min", "60")
+    ]
+    for label, sec in times:
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"qtime_{sec}"))
+    
+    bot.edit_message_text("⏱️ **Ek sawaal ke liye kitna time chahiye?**", 
+                          message.chat.id, message.message_id, reply_markup=markup, parse_mode="Markdown")
+
+def start_quiz_loop(user_id, chat_id, topic, level, time_limit):
     quiz_sessions[user_id] = {
         'active': True, 
         'topic': topic, 
         'level': level,
+        'time_limit': int(time_limit),
         'score': 0,
         'total': 0,
         'wrong': 0
     }
     send_new_question(user_id, chat_id)
+
+# TIMEOUT HANDLER
+def quiz_timeout_handler(user_id, chat_id, msg_id):
+    if user_id in quiz_sessions and quiz_sessions[user_id].get('active'):
+        current_msg_id = quiz_sessions[user_id].get('msg_id')
+        if current_msg_id == msg_id:
+            try:
+                bot.edit_message_text(
+                    "⏰ **Time Up!** ⌛\nYe galat mana jayega.", 
+                    chat_id, msg_id, parse_mode="Markdown"
+                )
+                quiz_sessions[user_id]['total'] += 1
+                quiz_sessions[user_id]['wrong'] += 1
+                time.sleep(2)
+                send_new_question(user_id, chat_id)
+            except: pass
 
 def send_new_question(user_id, chat_id):
     if user_id not in quiz_sessions or not quiz_sessions[user_id].get('active'): return
@@ -195,6 +243,7 @@ def send_new_question(user_id, chat_id):
         return
 
     session = quiz_sessions[user_id]
+    time_limit = session['time_limit']
     
     bot.send_chat_action(chat_id, 'typing')
 
@@ -205,9 +254,9 @@ def send_new_question(user_id, chat_id):
         "q": "Question text?",
         "o": ["Option 1", "Option 2", "Option 3", "Option 4"],
         "a": 0,
-        "exp": "Short explanation in Hinglish"
+        "exp": "Short explanation"
     }}
-    Index 'a' is 0, 1, 2, or 3. DO NOT USE MARKDOWN.
+    Index 'a' is 0-3. NO MARKDOWN.
     """
     
     try:
@@ -229,24 +278,28 @@ def send_new_question(user_id, chat_id):
         for i, opt in enumerate(safe_opts):
             options_text += f"**{labels[i]})** {opt}\n"
 
-        full_msg = f"🎮 **Quiz: {session['topic']}** | 📊 {session['level']}\n\n❓ **{safe_q}**\n\n{options_text}\n👇 *Sahi option chuno:*"
+        full_msg = f"🎮 **Quiz: {session['topic']}**\n⏳ **{time_limit} Seconds**\n\n❓ **{safe_q}**\n\n{options_text}\n👇 *Jaldi Jawab Do!*"
 
         markup = types.InlineKeyboardMarkup(row_width=4)
         btns = []
         for i in range(len(safe_opts)):
             btns.append(types.InlineKeyboardButton(f" {labels[i]} ", callback_data=f"qz_ans_{i}"))
         markup.add(*btns)
-        
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
-                   types.InlineKeyboardButton("❌ Radd Karo", callback_data="qz_stop"))
+                   types.InlineKeyboardButton("❌ Stop Quiz", callback_data="qz_stop"))
 
         msg = bot.send_message(chat_id, full_msg, reply_markup=markup, parse_mode="Markdown")
         quiz_sessions[user_id]['msg_id'] = msg.message_id
         
+        # START DYNAMIC TIMER
+        timer = threading.Timer(float(time_limit), quiz_timeout_handler, args=[user_id, chat_id, msg.message_id])
+        quiz_timers[user_id] = timer
+        timer.start()
+        
     except Exception as e:
         print(f"Quiz Error: {e}")
         try:
-            bot.send_message(chat_id, "⚠️ Question load error. Retrying...")
+            bot.send_message(chat_id, "⚠️ Retrying question...")
             time.sleep(2)
             send_new_question(user_id, chat_id)
         except:
@@ -256,16 +309,16 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\nLumding Server Connected! 🇮🇳")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     help_text = """
-🤖 **Dev Bot Commands:**
-1️⃣ **/raj** - Status
-2️⃣ **/quiz [topic]** - Start Quiz
-3️⃣ **/img [prompt]** - Generate Image
-4️⃣ **/settings** - Settings
+🤖 **Commands:**
+/raj - Status
+/quiz [topic] - Play Quiz
+/img [prompt] - AI Image
+/settings - Settings
     """
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
@@ -281,6 +334,7 @@ def send_image(message):
     try:
         url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
         bot.send_photo(message.chat.id, url, caption=f"🖼️ {prompt}")
+        send_log_to_channel(message.from_user, "IMAGE", prompt, "Image Generated")
     except: bot.reply_to(message, "❌ Error.")
 
 @bot.message_handler(commands=['quiz'])
@@ -294,43 +348,53 @@ def handle_quiz_command(message):
 def handle_callbacks(call):
     user_id = call.from_user.id
     
-    # --- MOOD SETTINGS HANDLER (MISSING PART ADDED) ---
+    # MOOD HANDLER
     if call.data.startswith("set_mode_"):
         new_mode = call.data.split("_")[2]
         config = get_user_config(user_id)
-        
-        # Mode Update
         config['mode'] = new_mode
-        config['history'] = [] # History clear karo taki naya mood shuru ho
-        
-        # Button ko update karo (Refresh Tick Mark)
         try:
-            bot.edit_message_reply_markup(
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id, 
-                reply_markup=get_settings_markup(user_id)
-            )
-            bot.answer_callback_query(call.id, f"Mode set to {new_mode.capitalize()}!")
+            bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_markup(user_id))
+            bot.answer_callback_query(call.id, f"Mode: {new_mode}")
         except: pass
         return
 
-    # --- LEVEL SELECTION ---
+    # LEVEL SELECTION -> ASK TIME
     if call.data.startswith("qlvl_"):
         if user_id not in quiz_sessions or 'pending_topic' not in quiz_sessions[user_id]:
-            bot.answer_callback_query(call.id, "Session Expired.")
+            bot.answer_callback_query(call.id, "Expired.")
             return
-        selected_level = call.data.split("_")[1]
-        topic = quiz_sessions[user_id]['pending_topic']
-        bot.edit_message_text(f"🚀 **Starting {selected_level} Quiz on {topic}...**", call.message.chat.id, call.message.message_id)
-        start_quiz_loop(user_id, call.message.chat.id, topic, selected_level)
+        # Level save karo aur Timer pucho
+        quiz_sessions[user_id]['pending_level'] = call.data.split("_")[1]
+        ask_quiz_timer(call.message)
         return
 
-    # --- QUIZ GAMEPLAY ---
-    if call.data.startswith("qz_"):
-        if user_id not in quiz_sessions or not quiz_sessions[user_id].get('active'):
-            bot.answer_callback_query(call.id, "Quiz Khatam.")
+    # TIME SELECTION -> START QUIZ
+    if call.data.startswith("qtime_"):
+        if user_id not in quiz_sessions or 'pending_level' not in quiz_sessions[user_id]:
+            bot.answer_callback_query(call.id, "Expired.")
             return
         
+        seconds = call.data.split("_")[1]
+        topic = quiz_sessions[user_id]['pending_topic']
+        level = quiz_sessions[user_id]['pending_level']
+        
+        bot.edit_message_text(f"🚀 **Quiz Started!**\nTopic: {topic}\nLevel: {level}\nTime: {seconds}s", 
+                              call.message.chat.id, call.message.message_id)
+        
+        start_quiz_loop(user_id, call.message.chat.id, topic, level, seconds)
+        return
+
+    # QUIZ GAMEPLAY
+    if call.data.startswith("qz_"):
+        if user_id not in quiz_sessions or not quiz_sessions[user_id].get('active'):
+            bot.answer_callback_query(call.id, "Quiz End.")
+            return
+        
+        if user_id in quiz_timers:
+            quiz_timers[user_id].cancel()
+            del quiz_timers[user_id]
+
         session = quiz_sessions[user_id]
         
         if call.data == "qz_stop":
@@ -340,32 +404,26 @@ def handle_callbacks(call):
             wrong = session['wrong']
             percent = int((score / total) * 100) if total > 0 else 0
             
-            if percent >= 90: emote = "🏆 **Genius! Maan gaye!** 🎉"
-            elif percent >= 70: emote = "😎 **Bahut badhiya khela!**"
-            elif percent >= 40: emote = "🙂 **Nice Try!**"
-            else: emote = "🥺 **Koi baat nahi!**"
+            if percent >= 90: emote = "🏆 **Genius!**"
+            elif percent >= 40: emote = "🙂 **Nice!**"
+            else: emote = "🥺 **Try Again!**"
 
             report = f"🛑 **Result:**\n✅ {score} | ❌ {wrong}\n📉 **{percent}%**\n{emote}"
-            try:
-                bot.edit_message_text(report, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-            except: pass 
+            try: bot.edit_message_text(report, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+            except: pass
             return
 
         if call.data == "qz_speak":
-            bot.answer_callback_query(call.id, "🔊 Bol raha hoon...")
+            bot.answer_callback_query(call.id, "🔊...")
             fname = f"q_{user_id}.mp3"
-            
             q_text = session.get('question_text', '')
             opts = session.get('options', [])
-            
-            full_speech = f"Sawal hai: {q_text}... Option A: {opts[0]}... Option B: {opts[1]}... Option C: {opts[2]}... Option D: {opts[3]}"
-            
+            full_speech = f"Sawal: {q_text}... A: {opts[0]}... B: {opts[1]}... C: {opts[2]}... D: {opts[3]}"
             clean_txt = clean_text_for_audio(full_speech)
             if generate_audio(user_id, clean_txt, fname):
                 with open(fname, "rb") as f: bot.send_voice(call.message.chat.id, f)
                 os.remove(fname)
-            else:
-                bot.answer_callback_query(call.id, "❌ Audio Fail")
+            else: bot.answer_callback_query(call.id, "Audio Error")
             return
 
         if call.data.startswith("qz_ans_"):
@@ -375,22 +433,22 @@ def handle_callbacks(call):
             
             if selected == session['correct_idx']:
                 session['score'] += 1
-                result = f"✅ **Sahi Jawab!** (Ans: {labels[session['correct_idx']]})"
+                result = f"✅ **Correct!** ({labels[session['correct_idx']]})"
             else:
                 session['wrong'] += 1
-                result = f"❌ **Galat!** Sahi tha: {labels[session['correct_idx']]}"
+                result = f"❌ **Wrong!** ({labels[session['correct_idx']]})"
 
             try:
-                bot.edit_message_text(f"{result}\n💡 {session['explanation']}\n\n⏳ **Agla sawal...**", 
+                bot.edit_message_text(f"{result}\n💡 {session['explanation']}\n\n⏳ **Next...**", 
                                       call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-            except: return 
+            except: return
 
             time.sleep(2)
             if quiz_sessions[user_id]['active']:
                 send_new_question(user_id, call.message.chat.id)
         return
 
-    # --- CLEAR MEMORY & CHAT SPEAK ---
+    # SETTINGS
     if call.data == "clear_json":
         if user_id == OWNER_ID:
             with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
@@ -431,14 +489,12 @@ def handle_text(message):
             [INSTRUCTION]: USE GOOGLE SEARCH for Facts/News.
             [Persona]: {RAW_MODES.get(config['mode'])}
             """
-            
             try:
                 if model_search and force_search:
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
                 elif model_basic:
                     response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
                 else: response = None
-                
                 ai_reply = response.text if response else "❌ Error."
             except Exception as e: ai_reply = f"⚠️ {e}"
 
@@ -448,6 +504,8 @@ def handle_text(message):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, reply_markup=markup)
+        
+        send_log_to_channel(message.from_user, source, user_text, ai_reply)
         
     except Exception as e: print(e)
 
@@ -471,3 +529,4 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+            
