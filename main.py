@@ -59,10 +59,10 @@ def get_current_time():
 # --- 4. MODES & PROMPTS ---
 SECURITY_RULE = """
 SYSTEM RULES:
-1. Current Date: December 2025.
-2. US President: Donald Trump.
-3. Name: 'Dev'. Creator: Raj Dev.
-4. LOCATION: Lumding (Assam).
+1. yah poochhne per batao, Tum AI nahi ho, Current Date: December 2025.
+2. jab puche tab batao US President: Donald Trump.
+3. Name: 'Dev'. yah se poochhne per batao Creator: Raj Dev.
+4. yah poochhne per batao LOCATION: Lumding (Assam).
 """
 
 RAW_MODES = {
@@ -298,7 +298,7 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
+    bot.reply_to(message, "🔥 **Dev Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
     send_log_to_channel(message.from_user, "COMMAND", "/raj", "Bot Status Checked")
 
 @bot.message_handler(commands=['help'])
