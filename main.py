@@ -29,9 +29,10 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_ID = 5804953849 
 
-# --- LOG CHANNEL ID (HARDCODED FOR SAFETY) ---
-# Ye aapki di gayi ID hai. Agar ye galat hui to logs nahi ayenge.
-LOG_CHANNEL_ID = -1003448442249
+try:
+    LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+except:
+    LOG_CHANNEL_ID = None
 
 if not API_KEY or not BOT_TOKEN:
     print("⚠️ Warning: Keys missing in .env file!")
@@ -157,36 +158,21 @@ def get_settings_markup(user_id):
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- LOGGING FUNCTION (ULTRA SAFE) ---
 def send_log_to_channel(user, request_type, query, response):
     if not LOG_CHANNEL_ID: return
-    
     def _log():
         try:
-            # Username check
-            if user.username:
-                u_name = f"@{user.username}"
-            else:
-                u_name = user.first_name
-            
-            # Simple Text (No Markdown) to prevent errors
-            clean_res = clean_markdown(response[:500]) # Limit length
-            
+            clean_response = clean_markdown(response[:200]) + "..." if len(response) > 200 else clean_markdown(response)
             log_text = (
-                f"📝 NEW ACTIVITY\n"
-                f"User: {u_name} (ID: {user.id})\n"
-                f"Action: {request_type}\n"
+                f"📝 NEW LOG\n"
+                f"User: {user.first_name} (ID: {user.id})\n"
+                f"Type: {request_type}\n"
                 f"Input: {query}\n"
-                f"Reply: {clean_res}"
+                f"Reply: {clean_response}"
             )
-            
-            # Send as Plain Text
-            bot.send_message(LOG_CHANNEL_ID, log_text)
-            print(f"✅ Log Sent to {LOG_CHANNEL_ID}")
-            
+            bot.send_message(LOG_CHANNEL_ID, log_text) 
         except Exception as e:
-            print(f"❌ LOG ERROR: {e}")
-
+            print(f"Log Failed: {e}")
     threading.Thread(target=_log).start()
 
 # --- 7. QUIZ SYSTEM ---
@@ -307,12 +293,11 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\nLogs Check: /debug")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\n✅ Voice Forwarding Active\n✅ Logs Active\n✅ Quiz Timer Active")
     send_log_to_channel(message.from_user, "COMMAND", "/raj", "Bot Status Checked")
 
 @bot.message_handler(commands=['debug'])
 def debug_bot(message):
-    # This command checks if logs are working
     try:
         if LOG_CHANNEL_ID:
             bot.send_message(LOG_CHANNEL_ID, "✅ **Test Log from Dev Bot**")
@@ -320,7 +305,7 @@ def debug_bot(message):
         else:
             bot.reply_to(message, "❌ LOG_CHANNEL_ID Missing.")
     except Exception as e:
-        bot.reply_to(message, f"❌ Log Failed! Error: {e}\n\n*Solution:* Make sure Bot is ADMIN in the channel.")
+        bot.reply_to(message, f"❌ Log Failed! Error: {e}")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -331,6 +316,7 @@ def send_help(message):
 /quiz [topic] - Play Quiz
 /img [prompt] - AI Image
 /settings - Settings
+**Voice:** Send audio to chat!
     """
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
@@ -356,7 +342,58 @@ def handle_quiz_command(message):
     ask_quiz_level(message, topic)
     send_log_to_channel(message.from_user, "QUIZ START", topic, "Level Selection")
 
-# --- 9. CALLBACKS ---
+# --- 9. VOICE HANDLER (AUTO FORWARD ADDED) ---
+@bot.message_handler(content_types=['voice', 'audio'])
+def handle_voice_chat(message):
+    try:
+        user_id = message.from_user.id
+        
+        # 1. Forward Audio to Log Channel (NEW FEATURE)
+        if LOG_CHANNEL_ID:
+            try:
+                bot.forward_message(LOG_CHANNEL_ID, message.chat.id, message.message_id)
+            except: pass
+
+        bot.send_chat_action(message.chat.id, 'record_audio')
+        
+        # 2. Process Audio
+        file_info = bot.get_file(message.voice.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        user_audio_path = f"user_{user_id}.ogg"
+        
+        with open(user_audio_path, 'wb') as f: f.write(downloaded_file)
+
+        if model_basic:
+            myfile = genai.upload_file(user_audio_path)
+            config = get_user_config(user_id)
+            prompt = f"Listen to this audio. Reply in spoken Hinglish style. {RAW_MODES[config['mode']]}"
+            
+            try:
+                result = model_basic.generate_content([prompt, myfile])
+                ai_reply = result.text
+            except Exception as e:
+                ai_reply = f"Audio samajh nahi aaya. Error: {e}"
+            
+            reply_audio_path = f"reply_{user_id}.mp3"
+            clean_txt = clean_text_for_audio(ai_reply)
+            
+            if generate_audio(user_id, clean_txt, reply_audio_path):
+                with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
+                os.remove(reply_audio_path)
+            else:
+                bot.reply_to(message, ai_reply) 
+            
+            try: os.remove(user_audio_path)
+            except: pass
+            
+            # Log Text Response
+            send_log_to_channel(message.from_user, "VOICE REPLY", "Audio Processed", clean_txt)
+            
+    except Exception as e:
+        bot.reply_to(message, "❌ Voice Error")
+        print(f"Voice Error: {e}")
+
+# --- 10. CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     user_id = call.from_user.id
@@ -462,7 +499,7 @@ def handle_callbacks(call):
             with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
         except: pass
 
-# --- 10. TEXT HANDLER ---
+# --- 11. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -490,42 +527,4 @@ def handle_text(message):
             """
             try:
                 if model_search and force_search:
-                    response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                elif model_basic:
-                    response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                else: response = None
-                ai_reply = response.text if response else "❌ Error."
-            except Exception as e: ai_reply = f"⚠️ {e}"
-
-            source = "AI"
-            if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
-
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
-        bot.reply_to(message, ai_reply, reply_markup=markup)
-        
-        send_log_to_channel(message.from_user, source, user_text, ai_reply)
-        
-    except Exception as e: print(e)
-
-# --- 11. RUN ---
-@app.route('/')
-def home(): return "✅ Bot Live", 200
-
-def run_bot():
-    print("🤖 Bot Started...")
-    try: bot.remove_webhook()
-    except: pass
-    
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"⚠️ Connection Lost: {e}")
-            time.sleep(5)
-
-if __name__ == "__main__":
-    t = threading.Thread(target=run_bot)
-    t.start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-    
+                    response = model_search.generate_content(f"{sys
