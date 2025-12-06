@@ -29,10 +29,9 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_ID = 5804953849 
 
-try:
-    LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
-except:
-    LOG_CHANNEL_ID = None
+# --- LOG CHANNEL ID (HARDCODED FOR SAFETY) ---
+# Ye aapki di gayi ID hai. Agar ye galat hui to logs nahi ayenge.
+LOG_CHANNEL_ID = -1003448442249
 
 if not API_KEY or not BOT_TOKEN:
     print("⚠️ Warning: Keys missing in .env file!")
@@ -59,10 +58,10 @@ def get_current_time():
 # --- 4. MODES & PROMPTS ---
 SECURITY_RULE = """
 SYSTEM RULES:
-1. yah poochhne per batao, Tum AI nahi ho, Current Date: December 2025.
-2. jab puche tab batao US President: Donald Trump.
-3. Name: 'Dev'. yah se poochhne per batao Creator: Raj Dev.
-4. yah poochhne per batao LOCATION: Lumding (Assam).
+1. Current Date: December 2025.
+2. US President: Donald Trump.
+3. Name: 'Dev'. Creator: Raj Dev.
+4. LOCATION: Lumding (Assam).
 """
 
 RAW_MODES = {
@@ -130,7 +129,6 @@ def save_to_json(question, answer):
 
 def clean_markdown(text):
     if not text: return ""
-    # Sabse common symbols jo Telegram todte hain
     return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
 
 def clean_text_for_audio(text):
@@ -159,23 +157,36 @@ def get_settings_markup(user_id):
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- LOGGING FUNCTION (SAFE MODE) ---
+# --- LOGGING FUNCTION (ULTRA SAFE) ---
 def send_log_to_channel(user, request_type, query, response):
     if not LOG_CHANNEL_ID: return
+    
     def _log():
         try:
-            clean_response = clean_markdown(response[:200]) + "..." if len(response) > 200 else clean_markdown(response)
+            # Username check
+            if user.username:
+                u_name = f"@{user.username}"
+            else:
+                u_name = user.first_name
+            
+            # Simple Text (No Markdown) to prevent errors
+            clean_res = clean_markdown(response[:500]) # Limit length
+            
             log_text = (
-                f"📝 NEW LOG\n"
-                f"User: {user.first_name} (ID: {user.id})\n"
-                f"Type: {request_type}\n"
-                f"Q: {query}\n"
-                f"A: {clean_response}"
+                f"📝 NEW ACTIVITY\n"
+                f"User: {u_name} (ID: {user.id})\n"
+                f"Action: {request_type}\n"
+                f"Input: {query}\n"
+                f"Reply: {clean_res}"
             )
-            # Parse mode hata diya taaki error na aaye
-            bot.send_message(LOG_CHANNEL_ID, log_text) 
+            
+            # Send as Plain Text
+            bot.send_message(LOG_CHANNEL_ID, log_text)
+            print(f"✅ Log Sent to {LOG_CHANNEL_ID}")
+            
         except Exception as e:
-            print(f"Log Failed: {e}")
+            print(f"❌ LOG ERROR: {e}")
+
     threading.Thread(target=_log).start()
 
 # --- 7. QUIZ SYSTEM ---
@@ -229,7 +240,7 @@ def send_new_question(user_id, chat_id):
         return
 
     session = quiz_sessions[user_id]
-    time_limit = session.get('time_limit', 15) # Default 15s safety
+    time_limit = session.get('time_limit', 15)
     
     bot.send_chat_action(chat_id, 'typing')
 
@@ -273,12 +284,10 @@ def send_new_question(user_id, chat_id):
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
                    types.InlineKeyboardButton("❌ Stop", callback_data="qz_stop"))
 
-        # SAFE SEND: Agar markdown fail hua to plain text bhejo
         try:
             msg = bot.send_message(chat_id, full_msg, reply_markup=markup, parse_mode="Markdown")
         except:
-            clean_msg = full_msg.replace("**", "").replace("*", "")
-            msg = bot.send_message(chat_id, clean_msg, reply_markup=markup)
+            msg = bot.send_message(chat_id, full_msg.replace("*", ""), reply_markup=markup)
 
         quiz_sessions[user_id]['msg_id'] = msg.message_id
         
@@ -298,14 +307,27 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\nLogs Check: /debug")
     send_log_to_channel(message.from_user, "COMMAND", "/raj", "Bot Status Checked")
+
+@bot.message_handler(commands=['debug'])
+def debug_bot(message):
+    # This command checks if logs are working
+    try:
+        if LOG_CHANNEL_ID:
+            bot.send_message(LOG_CHANNEL_ID, "✅ **Test Log from Dev Bot**")
+            bot.reply_to(message, f"✅ Log Sent to ID: {LOG_CHANNEL_ID}")
+        else:
+            bot.reply_to(message, "❌ LOG_CHANNEL_ID Missing.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Log Failed! Error: {e}\n\n*Solution:* Make sure Bot is ADMIN in the channel.")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     help_text = """
 🤖 **Commands:**
 /raj - Status
+/debug - Check Logs
 /quiz [topic] - Play Quiz
 /img [prompt] - AI Image
 /settings - Settings
@@ -349,18 +371,16 @@ def handle_callbacks(call):
         except: pass
         return
 
-    # CRASH FIX: Check Keys safely
     if call.data.startswith("qlvl_"):
-        if user_id not in quiz_sessions or 'pending_topic' not in quiz_sessions[user_id]:
-            bot.answer_callback_query(call.id, "Session Expired. Start again.")
+        if user_id not in quiz_sessions:
+            bot.answer_callback_query(call.id, "Expired. Start again.")
             return
         quiz_sessions[user_id]['pending_level'] = call.data.split("_")[1]
         ask_quiz_timer(call.message)
         return
 
     if call.data.startswith("qtime_"):
-        # CRASH FIX: Check Keys safely
-        if user_id not in quiz_sessions or 'pending_level' not in quiz_sessions[user_id]:
+        if user_id not in quiz_sessions:
             bot.answer_callback_query(call.id, "Session Expired. Start again.")
             return
         
@@ -388,11 +408,9 @@ def handle_callbacks(call):
             total = session['total']
             wrong = session['wrong']
             percent = int((score / total) * 100) if total > 0 else 0
-            
             if percent >= 90: emote = "🏆 **Genius!**"
             elif percent >= 40: emote = "🙂 **Nice!**"
             else: emote = "🥺 **Try Again!**"
-
             report = f"🛑 **Result:**\n✅ {score} | ❌ {wrong}\n📉 **{percent}%**\n{emote}"
             try: bot.edit_message_text(report, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
             except: pass
@@ -420,15 +438,11 @@ def handle_callbacks(call):
             else:
                 session['wrong'] += 1
                 result = f"❌ **Wrong!** ({labels[session['correct_idx']]})"
-            
-            # SAFE SEND: Try Markdown, fallback to plain
             try:
                 bot.edit_message_text(f"{result}\n💡 {session['explanation']}\n\n⏳ **Next...**", 
                                       call.message.chat.id, call.message.message_id, parse_mode="Markdown")
             except:
-                clean_res = result.replace("*", "")
-                bot.edit_message_text(f"{clean_res}\n💡 {session['explanation']}\n\n⏳ **Next...**", 
-                                      call.message.chat.id, call.message.message_id)
+                bot.edit_message_text(f"{result.replace('*', '')}\n\n⏳ Next...", call.message.chat.id, call.message.message_id)
 
             time.sleep(2)
             if quiz_sessions[user_id]['active']:
@@ -490,7 +504,6 @@ def handle_text(message):
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
         bot.reply_to(message, ai_reply, reply_markup=markup)
         
-        # LOGGING
         send_log_to_channel(message.from_user, source, user_text, ai_reply)
         
     except Exception as e: print(e)
@@ -515,3 +528,4 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    
