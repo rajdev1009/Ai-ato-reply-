@@ -503,119 +503,75 @@ def handle_callbacks(call):
             with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
         except: pass
 
-#--- 11. TEXT HANDLER ---
-
+# --- 11. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
-
 def handle_text(message):
+    try:
+        user_id = message.from_user.id
+        
+        # Agar Quiz chal raha hai to text ignore karo
+        if user_id in quiz_sessions and quiz_sessions[user_id].get('active'): return
 
-try:
+        user_text = message.text
+        if not user_text: return
+        
+        config = get_user_config(user_id)
+        
+        # Search Triggers
+        triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live", "movie", "film", "release", "aayegi"]
+        force_search = any(x in user_text.lower() for x in triggers)
 
-user_id = message.from_user.id
+        saved_reply = get_reply_from_json(user_text)
+        
+        # Memory Logic
+        if saved_reply and config['memory'] and not force_search:
+            ai_reply = saved_reply
+            source = "JSON"
+        else:
+            bot.send_chat_action(message.chat.id, 'typing')
+            sys_prompt = f"""
+            [System]: Date: {get_current_time()}. Era: Late 2025.
+            [INSTRUCTION]: USE GOOGLE SEARCH for Facts/News.
+            [Persona]: {RAW_MODES.get(config['mode'])}
+            """
+            try:
+                if model_search and force_search:
+                    response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
+                elif model_basic:
+                    response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
+                else: response = None
+                ai_reply = response.text if response else "❌ Error."
+            except Exception as e: ai_reply = f"⚠️ {e}"
 
-if user_id in quiz_sessions and quiz_sessions[user_id].get('active'): return
+            source = "AI"
+            if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
 
-user_text = message.text
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
+        bot.reply_to(message, ai_reply, reply_markup=markup)
+        
+        send_log_to_channel(message.from_user, source, user_text, ai_reply)
+        
+    except Exception as e: print(e)
 
-if not user_text: return
-
-config = get_user_config(user_id)
-
-triggers = ["news", "rate", "price", "weather", "who", "what",
-
-"where", "kab", "kahan", "kaise", "president", "winner", "live", "movie", "film", "release", "aayegi"]
-
-force_search = any(x in user_text.lower() for x in triggers)
-
-saved_reply = get_reply_from_json(user_text)
-
-if saved_reply and config['memory'] and not force_search:
-
-ai_reply = saved_reply
-
-source = "JSON"
-
-else:
-
-bot.send_chat_action(message.chat.id, 'typing')
-
-sys_prompt = f"""
-
-[System]: Date: get_current_time()). Era: Late 2025.
-
-[INSTRUCTION]: USE GOOGLE SEARCH for Facts/News.
-
-[Persona]: [RAW_MODES.get(config['mode'])}
-
-111111
-
-try:
-
-if model_search and force_search:
-
-response =
-
-model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
-
-elif model_basic:
-
-response =
-
-model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
-
-else: response = None
-
-ai_reply = response.text if response else "X Error."
-
-except Exception as e: ai_reply = f" {e}"
-
-source = "AI"
-
-if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
-    
-
-markup = types.InlineKeyboardMarkup()
-
-markup.add(types.InlineKeyboardButton(" Suno",
-
-callback_data="speak_msg"))
-
-bot.reply_to(message, ai_reply, reply_markup=markup)
-
-send_log_to_channel(message.from_user, source, user_text, ai_reply)
-
-except Exception as e: print(e)
-
-#--- 12. RUN ---
-
+# --- 12. RUN ---
 @app.route('/')
-
-def home(): return " Bot Live", 200
+def home(): return "✅ Bot Live", 200
 
 def run_bot():
+    print("🤖 Bot Started...")
+    try: bot.remove_webhook()
+    except: pass
+    
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"⚠️ Connection Lost: {e}")
+            time.sleep(5)
 
-print(" Bot Started...")
-
-try: bot.remove_webhook()
-
-except: pass
-
-while True:
-
-try:
-
-bot.infinity_polling (timeout=60, long_polling_timeout=60)
-
-except Exception as e:
-
-print(f" Connection Lost: {e}")
-
-time.sleep(5)
-
-if_name__ == "__main__":
-
-t = threading.Thread(target-run_bot)
-
-t.start()
-
-app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+if __name__ == "__main__":
+    t = threading.Thread(target=run_bot)
+    t.start()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    
