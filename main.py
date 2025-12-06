@@ -32,8 +32,7 @@ OWNER_ID = 5804953849
 try:
     LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 except:
-    # Fallback to Hardcoded ID if env fails
-    LOG_CHANNEL_ID = -1003448442249
+    LOG_CHANNEL_ID = None
 
 if not API_KEY or not BOT_TOKEN:
     print("⚠️ Warning: Keys missing in .env file!")
@@ -527,4 +526,40 @@ def handle_text(message):
             try:
                 if model_search and force_search:
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
-          
+                elif model_basic:
+                    response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
+                else: response = None
+                ai_reply = response.text if response else "❌ Error."
+            except Exception as e: ai_reply = f"⚠️ {e}"
+
+            source = "AI"
+            if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
+        bot.reply_to(message, ai_reply, reply_markup=markup)
+        
+        send_log_to_channel(message.from_user, source, user_text, ai_reply)
+        
+    except Exception as e: print(e)
+
+# --- 12. RUN ---
+@app.route('/')
+def home(): return "✅ Bot Live", 200
+
+def run_bot():
+    print("🤖 Bot Started...")
+    try: bot.remove_webhook()
+    except: pass
+    
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"⚠️ Connection Lost: {e}")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    t = threading.Thread(target=run_bot)
+    t.start()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
