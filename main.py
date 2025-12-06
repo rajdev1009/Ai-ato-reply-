@@ -14,7 +14,7 @@ import urllib.parse
 from datetime import datetime
 import pytz 
 import subprocess 
-import re # Text safai ke liye
+import re 
 
 # --- IMPORT OPTIONAL MODULES ---
 try:
@@ -124,41 +124,32 @@ def save_to_json(question, answer):
         with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4, ensure_ascii=False)
     except: pass
 
-# FIX 1: Clean Markdown function to prevent Telegram Error 400
 def clean_markdown(text):
     if not text: return ""
-    # Star (*), Underscore (_), Backtick (`) ko hata do taaki Telegram confuse na ho
     return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
 
 def clean_text_for_audio(text):
     if not text: return ""
     return clean_markdown(text)
 
-# FIX 2: Robust Audio Generator
 def generate_audio(user_id, text, filename):
     if not text or len(text.strip()) == 0: return False
-    
-    # Try Edge TTS First
     try:
         command = ["edge-tts", "--voice", EDGE_VOICE_ID, "--text", text, "--write-media", filename]
-        # Timeout is important
         subprocess.run(command, check=True, timeout=15) 
         return True
     except Exception as e:
-        print(f"⚠️ Edge TTS Failed, switching to Google TTS... Error: {e}")
-        # Fallback to Google TTS
         try:
             tts = gTTS(text=text, lang='hi', slow=False)
             tts.save(filename)
             return True
-        except Exception as e2: 
-            print(f"❌ Both TTS Failed: {e2}")
-            return False
+        except: return False
 
 def get_settings_markup(user_id):
     config = get_user_config(user_id)
     markup = types.InlineKeyboardMarkup(row_width=2)
     for m in RAW_MODES.keys():
+        # Checkmark Logic
         text = f"✅ {m.capitalize()}" if m == config['mode'] else f"❌ {m.capitalize()}"
         markup.add(types.InlineKeyboardButton(text, callback_data=f"set_mode_{m}"))
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
@@ -213,7 +204,7 @@ def send_new_question(user_id, chat_id):
         "a": 0,
         "exp": "Short explanation in Hinglish"
     }}
-    Index 'a' is 0, 1, 2, or 3. DO NOT USE MARKDOWN IN JSON VALUES.
+    Index 'a' is 0, 1, 2, or 3. DO NOT USE MARKDOWN.
     """
     
     try:
@@ -221,7 +212,6 @@ def send_new_question(user_id, chat_id):
         text = response.text.strip().replace("```json", "").replace("```", "")
         data = json.loads(text)
         
-        # Sanitizing Data to prevent Telegram Error 400
         safe_q = clean_markdown(data['q'])
         safe_exp = clean_markdown(data['exp'])
         safe_opts = [clean_markdown(o) for o in data['o']]
@@ -252,7 +242,6 @@ def send_new_question(user_id, chat_id):
         
     except Exception as e:
         print(f"Quiz Error: {e}")
-        # Error aane par user ko batao, par crash mat hone do
         try:
             bot.send_message(chat_id, "⚠️ Question load error. Retrying...")
             time.sleep(2)
@@ -302,7 +291,27 @@ def handle_quiz_command(message):
 def handle_callbacks(call):
     user_id = call.from_user.id
     
-    # LEVEL SELECTION
+    # --- MOOD SETTINGS HANDLER (MISSING PART ADDED) ---
+    if call.data.startswith("set_mode_"):
+        new_mode = call.data.split("_")[2]
+        config = get_user_config(user_id)
+        
+        # Mode Update
+        config['mode'] = new_mode
+        config['history'] = [] # History clear karo taki naya mood shuru ho
+        
+        # Button ko update karo (Refresh Tick Mark)
+        try:
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id, 
+                message_id=call.message.message_id, 
+                reply_markup=get_settings_markup(user_id)
+            )
+            bot.answer_callback_query(call.id, f"Mode set to {new_mode.capitalize()}!")
+        except: pass
+        return
+
+    # --- LEVEL SELECTION ---
     if call.data.startswith("qlvl_"):
         if user_id not in quiz_sessions or 'pending_topic' not in quiz_sessions[user_id]:
             bot.answer_callback_query(call.id, "Session Expired.")
@@ -313,7 +322,7 @@ def handle_callbacks(call):
         start_quiz_loop(user_id, call.message.chat.id, topic, selected_level)
         return
 
-    # QUIZ GAMEPLAY
+    # --- QUIZ GAMEPLAY ---
     if call.data.startswith("qz_"):
         if user_id not in quiz_sessions or not quiz_sessions[user_id].get('active'):
             bot.answer_callback_query(call.id, "Quiz Khatam.")
@@ -348,9 +357,7 @@ def handle_callbacks(call):
             
             full_speech = f"Sawal hai: {q_text}... Option A: {opts[0]}... Option B: {opts[1]}... Option C: {opts[2]}... Option D: {opts[3]}"
             
-            # Clean text for TTS
             clean_txt = clean_text_for_audio(full_speech)
-            
             if generate_audio(user_id, clean_txt, fname):
                 with open(fname, "rb") as f: bot.send_voice(call.message.chat.id, f)
                 os.remove(fname)
@@ -380,7 +387,7 @@ def handle_callbacks(call):
                 send_new_question(user_id, call.message.chat.id)
         return
 
-    # SETTINGS
+    # --- CLEAR MEMORY & CHAT SPEAK ---
     if call.data == "clear_json":
         if user_id == OWNER_ID:
             with open(JSON_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
@@ -461,4 +468,3 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-    
