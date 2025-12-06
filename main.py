@@ -32,7 +32,8 @@ OWNER_ID = 5804953849
 try:
     LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 except:
-    LOG_CHANNEL_ID = None
+    # Fallback to Hardcoded ID if env fails
+    LOG_CHANNEL_ID = -1003448442249
 
 if not API_KEY or not BOT_TOKEN:
     print("⚠️ Warning: Keys missing in .env file!")
@@ -342,13 +343,13 @@ def handle_quiz_command(message):
     ask_quiz_level(message, topic)
     send_log_to_channel(message.from_user, "QUIZ START", topic, "Level Selection")
 
-# --- 9. VOICE HANDLER (AUTO FORWARD ADDED) ---
+# --- 9. VOICE HANDLER ---
 @bot.message_handler(content_types=['voice', 'audio'])
 def handle_voice_chat(message):
     try:
         user_id = message.from_user.id
         
-        # 1. Forward Audio to Log Channel (NEW FEATURE)
+        # 1. Forward Audio to Log Channel
         if LOG_CHANNEL_ID:
             try:
                 bot.forward_message(LOG_CHANNEL_ID, message.chat.id, message.message_id)
@@ -356,7 +357,6 @@ def handle_voice_chat(message):
 
         bot.send_chat_action(message.chat.id, 'record_audio')
         
-        # 2. Process Audio
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         user_audio_path = f"user_{user_id}.ogg"
@@ -386,7 +386,6 @@ def handle_voice_chat(message):
             try: os.remove(user_audio_path)
             except: pass
             
-            # Log Text Response
             send_log_to_channel(message.from_user, "VOICE REPLY", "Audio Processed", clean_txt)
             
     except Exception as e:
@@ -527,4 +526,5 @@ def handle_text(message):
             """
             try:
                 if model_search and force_search:
-                    response = model_search.generate_content(f"{sys
+                    response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
+          
