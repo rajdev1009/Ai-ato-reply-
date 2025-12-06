@@ -27,7 +27,6 @@ except ImportError:
 # ==========================================================
 
 # 1. Google Gemini API Key (Quotes "" ke andar paste karein)
-# NOTE: Nayi Gmail ID se key banakar yahan dalen!
 API_KEY = "YAHAN_APNI_NAYI_GEMINI_KEY_PASTE_KAREIN" 
 
 # 2. Telegram Bot Token (Quotes "" ke andar paste karein)
@@ -42,7 +41,6 @@ OWNER_ID = 5804953849
 # ==========================================================
 
 # --- 2. SETUP ---
-# Check if user forgot to paste keys
 if "YAHAN_" in API_KEY or "YAHAN_" in BOT_TOKEN:
     print("❌ ERROR: Apne Code mein API Key paste nahi ki hai!")
 
@@ -68,11 +66,10 @@ def get_current_time():
 # --- 4. MODES & PROMPTS ---
 SECURITY_RULE = """
 SYSTEM RULES:
-1. Bina puche kuchh mat batao Current Date: December 2025.
-2. Bina puche kuchh mat batao US President: Donald Trump.
-3. Bina puche kuchh mat batao Name: 'Dev'. Creator: Raj Dev.
-4. Bina puche kuchh mat batao LOCATION: Lumding (Assam).
-5. tum AI nahin ho
+1. Current Date: December 2025.
+2. US President: Donald Trump.
+3. Name: 'Dev'. Creator: Raj Dev.
+4. LOCATION: Lumding (Assam).
 """
 
 RAW_MODES = {
@@ -170,10 +167,8 @@ def send_log_to_channel(user, request_type, query, response):
     if not LOG_CHANNEL_ID: return
     def _log():
         try:
-            # Username check
             u_name = f"@{user.username}" if user.username else user.first_name
             clean_res = clean_markdown(response[:500]) 
-            
             log_text = (
                 f"📝 NEW ACTIVITY\n"
                 f"User: {u_name} (ID: {user.id})\n"
@@ -323,8 +318,9 @@ def send_help(message):
     help_text = """
 🤖 **Commands:**
 /raj - Status
+/debug - Check Logs
 /quiz [topic] - Play Quiz
-/img [prompt] -  Image
+/img [prompt] - AI Image
 /settings - Settings
 **Voice:** Send audio to chat!
     """
@@ -517,9 +513,7 @@ try:
 
 user_id = message.from_user.id
 
-if user_id in quiz_sessions and
-
-quiz_sessions[user_id].get('active'): return
+if user_id in quiz_sessions and quiz_sessions[user_id].get('active'): return
 
 user_text = message.text
 
@@ -547,11 +541,13 @@ bot.send_chat_action(message.chat.id, 'typing')
 
 sys_prompt = f"""
 
-[System]: Date: {get_current_time()}. Era: Late 2025.
+[System]: Date: get_current_time()). Era: Late 2025.
 
 [INSTRUCTION]: USE GOOGLE SEARCH for Facts/News.
 
 [Persona]: [RAW_MODES.get(config['mode'])}
+
+111111
 
 try:
 
@@ -559,26 +555,26 @@ if model_search and force_search:
 
 response =
 
-model_search.generate_content(f"{sys_prompt}\nUser:
-
-{user_text}")
+model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
 
 elif model_basic:
 
 response =
 
-model_basic.generate_content(f"{sys_prompt}\nUser: [user_text}")
+model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
 
 else: response = None
 
-ai_reply = response.text if response else "Error."
+ai_reply = response.text if response else "X Error."
 
 except Exception as e: ai_reply = f" {e}"
 
 source = "AI"
 
 if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
-  markup = types.InlineKeyboardMarkup()
+    
+
+markup = types.InlineKeyboardMarkup()
 
 markup.add(types.InlineKeyboardButton(" Suno",
 
@@ -586,9 +582,7 @@ callback_data="speak_msg"))
 
 bot.reply_to(message, ai_reply, reply_markup=markup)
 
-send_log_to_channel(message.from_user, source, user_text,
-
-ai_reply)
+send_log_to_channel(message.from_user, source, user_text, ai_reply)
 
 except Exception as e: print(e)
 
@@ -596,7 +590,7 @@ except Exception as e: print(e)
 
 @app.route('/')
 
-def home(): return Bot Live", 200
+def home(): return " Bot Live", 200
 
 def run_bot():
 
@@ -610,7 +604,7 @@ while True:
 
 try:
 
-bot.infinity_polling(timeout=60, long_polling_timeout=60)
+bot.infinity_polling (timeout=60, long_polling_timeout=60)
 
 except Exception as e:
 
