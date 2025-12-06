@@ -29,11 +29,13 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_ID = 5804953849 
 
-# FIX: Log Channel ID Hardcoded (Ab ye 100% kaam karega)
-LOG_CHANNEL_ID = -1003448442249
+try:
+    LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+except:
+    LOG_CHANNEL_ID = None
 
 if not API_KEY or not BOT_TOKEN:
-    print("⚠️ Warning: Keys missing!")
+    print("⚠️ Warning: Keys missing in .env file!")
 
 # --- 2. SETUP ---
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -61,7 +63,6 @@ SYSTEM RULES:
 2. US President: Donald Trump.
 3. Name: 'Dev'. Creator: Raj Dev.
 4. LOCATION: Lumding (Assam).
-   - Famous Temples: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
 """
 
 RAW_MODES = {
@@ -101,7 +102,6 @@ def get_working_model():
 
 model_basic, active_model_name = get_working_model()
 
-# Search Tool
 try:
     if active_model_name and "flash" in active_model_name:
         model_search = genai.GenerativeModel(active_model_name, tools='google_search')
@@ -130,6 +130,7 @@ def save_to_json(question, answer):
 
 def clean_markdown(text):
     if not text: return ""
+    # Sabse common symbols jo Telegram todte hain
     return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
 
 def clean_text_for_audio(text):
@@ -158,29 +159,23 @@ def get_settings_markup(user_id):
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
-# --- LOGGING FUNCTION (FORCE LOGGING) ---
+# --- LOGGING FUNCTION (SAFE MODE) ---
 def send_log_to_channel(user, request_type, query, response):
-    # Separate Thread to prevent blocking
+    if not LOG_CHANNEL_ID: return
     def _log():
         try:
-            # Username check
-            username = f"@{user.username}" if user.username else "No Username"
-            
-            # Message Clean up
-            clean_response = response[:200] + "..." if len(response) > 200 else response
-            
+            clean_response = clean_markdown(response[:200]) + "..." if len(response) > 200 else clean_markdown(response)
             log_text = (
-                f"📝 **New Activity**\n"
-                f"👤 **User:** {user.first_name} ({username})\n"
-                f"🆔 **ID:** `{user.id}`\n"
-                f"🤖 **Action:** {request_type}\n"
-                f"❓ **Input:** {query}\n"
-                f"✅ **Reply:** {clean_response}"
+                f"📝 NEW LOG\n"
+                f"User: {user.first_name} (ID: {user.id})\n"
+                f"Type: {request_type}\n"
+                f"Q: {query}\n"
+                f"A: {clean_response}"
             )
-            bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="Markdown")
+            # Parse mode hata diya taaki error na aaye
+            bot.send_message(LOG_CHANNEL_ID, log_text) 
         except Exception as e:
-            print(f"❌ LOG ERROR: {e} (Make sure Bot is Admin in Channel)")
-
+            print(f"Log Failed: {e}")
     threading.Thread(target=_log).start()
 
 # --- 7. QUIZ SYSTEM ---
@@ -234,6 +229,8 @@ def send_new_question(user_id, chat_id):
         return
 
     session = quiz_sessions[user_id]
+    time_limit = session.get('time_limit', 15) # Default 15s safety
+    
     bot.send_chat_action(chat_id, 'typing')
 
     prompt = f"""
@@ -257,7 +254,7 @@ def send_new_question(user_id, chat_id):
         safe_opts = [clean_markdown(o) for o in data['o']]
         
         quiz_sessions[user_id]['correct_idx'] = data['a']
-        quiz_sessions[user_id]['explanation'] = clean_markdown(data['exp'])
+        quiz_sessions[user_id]['explanation'] = clean_markdown(data.get('exp', ''))
         quiz_sessions[user_id]['question_text'] = safe_q
         quiz_sessions[user_id]['options'] = safe_opts
 
@@ -266,7 +263,7 @@ def send_new_question(user_id, chat_id):
         for i, opt in enumerate(safe_opts):
             options_text += f"**{labels[i]})** {opt}\n"
 
-        full_msg = f"🎮 **Quiz: {session['topic']}**\n⏳ **{session['time_limit']} Seconds**\n\n❓ **{safe_q}**\n\n{options_text}\n👇 *Jaldi Jawab Do!*"
+        full_msg = f"🎮 **Quiz: {session['topic']}**\n⏳ **{time_limit} Seconds**\n\n❓ **{safe_q}**\n\n{options_text}\n👇 *Jaldi Jawab Do!*"
 
         markup = types.InlineKeyboardMarkup(row_width=4)
         btns = []
@@ -276,10 +273,16 @@ def send_new_question(user_id, chat_id):
         markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="qz_speak"), 
                    types.InlineKeyboardButton("❌ Stop", callback_data="qz_stop"))
 
-        msg = bot.send_message(chat_id, full_msg, reply_markup=markup, parse_mode="Markdown")
+        # SAFE SEND: Agar markdown fail hua to plain text bhejo
+        try:
+            msg = bot.send_message(chat_id, full_msg, reply_markup=markup, parse_mode="Markdown")
+        except:
+            clean_msg = full_msg.replace("**", "").replace("*", "")
+            msg = bot.send_message(chat_id, clean_msg, reply_markup=markup)
+
         quiz_sessions[user_id]['msg_id'] = msg.message_id
         
-        timer = threading.Timer(float(session['time_limit']), quiz_timeout_handler, args=[user_id, chat_id, msg.message_id])
+        timer = threading.Timer(float(time_limit), quiz_timeout_handler, args=[user_id, chat_id, msg.message_id])
         quiz_timers[user_id] = timer
         timer.start()
         
@@ -295,7 +298,7 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\nLogs & Timer Active.")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
     send_log_to_channel(message.from_user, "COMMAND", "/raj", "Bot Status Checked")
 
 @bot.message_handler(commands=['help'])
@@ -321,7 +324,7 @@ def send_image(message):
     try:
         url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
         bot.send_photo(message.chat.id, url, caption=f"🖼️ {prompt}")
-        send_log_to_channel(message.from_user, "IMAGE", prompt, url)
+        send_log_to_channel(message.from_user, "IMAGE", prompt, "Image Generated")
     except: bot.reply_to(message, "❌ Error.")
 
 @bot.message_handler(commands=['quiz'])
@@ -346,16 +349,21 @@ def handle_callbacks(call):
         except: pass
         return
 
+    # CRASH FIX: Check Keys safely
     if call.data.startswith("qlvl_"):
-        if user_id not in quiz_sessions:
-            bot.answer_callback_query(call.id, "Expired.")
+        if user_id not in quiz_sessions or 'pending_topic' not in quiz_sessions[user_id]:
+            bot.answer_callback_query(call.id, "Session Expired. Start again.")
             return
         quiz_sessions[user_id]['pending_level'] = call.data.split("_")[1]
         ask_quiz_timer(call.message)
         return
 
     if call.data.startswith("qtime_"):
-        if user_id not in quiz_sessions: return
+        # CRASH FIX: Check Keys safely
+        if user_id not in quiz_sessions or 'pending_level' not in quiz_sessions[user_id]:
+            bot.answer_callback_query(call.id, "Session Expired. Start again.")
+            return
+        
         seconds = call.data.split("_")[1]
         topic = quiz_sessions[user_id]['pending_topic']
         level = quiz_sessions[user_id]['pending_level']
@@ -380,9 +388,11 @@ def handle_callbacks(call):
             total = session['total']
             wrong = session['wrong']
             percent = int((score / total) * 100) if total > 0 else 0
+            
             if percent >= 90: emote = "🏆 **Genius!**"
             elif percent >= 40: emote = "🙂 **Nice!**"
             else: emote = "🥺 **Try Again!**"
+
             report = f"🛑 **Result:**\n✅ {score} | ❌ {wrong}\n📉 **{percent}%**\n{emote}"
             try: bot.edit_message_text(report, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
             except: pass
@@ -410,10 +420,16 @@ def handle_callbacks(call):
             else:
                 session['wrong'] += 1
                 result = f"❌ **Wrong!** ({labels[session['correct_idx']]})"
+            
+            # SAFE SEND: Try Markdown, fallback to plain
             try:
                 bot.edit_message_text(f"{result}\n💡 {session['explanation']}\n\n⏳ **Next...**", 
                                       call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-            except: return
+            except:
+                clean_res = result.replace("*", "")
+                bot.edit_message_text(f"{clean_res}\n💡 {session['explanation']}\n\n⏳ **Next...**", 
+                                      call.message.chat.id, call.message.message_id)
+
             time.sleep(2)
             if quiz_sessions[user_id]['active']:
                 send_new_question(user_id, call.message.chat.id)
@@ -499,4 +515,3 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_bot)
     t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-            
