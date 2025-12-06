@@ -61,9 +61,9 @@ def get_current_time():
 SECURITY_RULE = """
 SYSTEM RULES:
 1. Current Date: December 2025.
-2. US President: Donald Trump.
-3. Name: 'Dev'. Creator: Raj Dev.
-4. LOCATION: Lumding (Assam).
+2. Tum Ai nahi Ho. Tum Google search kar rahe ho jo bhi kisi ko mat batao.
+3. jab aapko puche tab batao Name: 'Dev'. Creator: Raj Dev.
+4. jab aapko poochha tab batao LOCATION: Lumding (Assam).
    - Famous Temples: 'Boro Kali Bari', 'Boro Shitala Bari Nadir Paar'.
 """
 
@@ -169,7 +169,7 @@ def send_log_to_channel(user, request_type, query, response):
                 f"📝 **Log Update**\n"
                 f"👤 **User:** {user.first_name} (ID: {user.id})\n"
                 f"🤖 **Type:** {request_type}\n"
-                f"❓ **Q:** {query}\n"
+                f" **Q:** {query}\n"
                 f"✅ **A:** {clean_response}"
             )
             bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="Markdown")
@@ -309,7 +309,7 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
+    bot.reply_to(message, "🔥 **Dev is Online!**\n\n✅ Logs Active\n✅ Custom Timers Active")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -414,7 +414,7 @@ def handle_callbacks(call):
             return
 
         if call.data == "qz_speak":
-            bot.answer_callback_query(call.id, "🔊...")
+            bot.answer_callback_query(call.id, "🔊 recording...")
             fname = f"q_{user_id}.mp3"
             q_text = session.get('question_text', '')
             opts = session.get('options', [])
@@ -511,7 +511,7 @@ def handle_text(message):
 
 # --- 11. RUN ---
 @app.route('/')
-def home(): return "✅ Bot Live", 200
+def home(): return "✅ Live", 200
 
 def run_bot():
     print("🤖 Bot Started...")
