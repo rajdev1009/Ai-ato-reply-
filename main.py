@@ -22,29 +22,21 @@ try:
 except ImportError:
     pass
 
-# ==========================================================
-# 👇 YAHAN APNI DETAILS PASTE KAREN (IMPORTANT) 👇
-# ==========================================================
+# --- 1. CONFIGURATION ---
+load_dotenv()
 
-# 1. Google Gemini API Key (Quotes "" ke andar paste karein)
-API_KEY = "YAHAN_APNI_NAYI_GEMINI_KEY_PASTE_KAREIN" 
-
-# 2. Telegram Bot Token (Quotes "" ke andar paste karein)
-BOT_TOKEN = "YAHAN_APNA_BOT_TOKEN_PASTE_KAREIN"
-
-# 3. Log Channel ID (Bina quotes ke number likhen)
-LOG_CHANNEL_ID = -1003448442249
-
-# 4. Owner ID
+API_KEY = os.getenv("GOOGLE_API_KEY")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_ID = 5804953849 
 
-# ==========================================================
+# --- LOG CHANNEL ID (HARDCODED FOR SAFETY) ---
+# Ye aapki di gayi ID hai. Agar ye galat hui to logs nahi ayenge.
+LOG_CHANNEL_ID = -1003448442249
+
+if not API_KEY or not BOT_TOKEN:
+    print("⚠️ Warning: Keys missing in .env file!")
 
 # --- 2. SETUP ---
-if "YAHAN_" in API_KEY or "YAHAN_" in BOT_TOKEN:
-    print("❌ ERROR: Apne Code mein API Key paste nahi ki hai!")
-
-genai.configure(api_key=API_KEY)
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
@@ -80,6 +72,8 @@ RAW_MODES = {
 }
 
 # --- 5. UNIVERSAL MODEL LOADER ---
+genai.configure(api_key=API_KEY)
+
 def get_working_model():
     print("🔄 Loading AI Models...")
     fallback_model = "gemini-1.5-flash"
@@ -163,12 +157,21 @@ def get_settings_markup(user_id):
     markup.add(types.InlineKeyboardButton("🗑️ Clear Memory", callback_data="clear_json"))
     return markup
 
+# --- LOGGING FUNCTION (ULTRA SAFE) ---
 def send_log_to_channel(user, request_type, query, response):
     if not LOG_CHANNEL_ID: return
+    
     def _log():
         try:
-            u_name = f"@{user.username}" if user.username else user.first_name
-            clean_res = clean_markdown(response[:500]) 
+            # Username check
+            if user.username:
+                u_name = f"@{user.username}"
+            else:
+                u_name = user.first_name
+            
+            # Simple Text (No Markdown) to prevent errors
+            clean_res = clean_markdown(response[:500]) # Limit length
+            
             log_text = (
                 f"📝 NEW ACTIVITY\n"
                 f"User: {u_name} (ID: {user.id})\n"
@@ -176,9 +179,14 @@ def send_log_to_channel(user, request_type, query, response):
                 f"Input: {query}\n"
                 f"Reply: {clean_res}"
             )
-            bot.send_message(LOG_CHANNEL_ID, log_text) 
+            
+            # Send as Plain Text
+            bot.send_message(LOG_CHANNEL_ID, log_text)
+            print(f"✅ Log Sent to {LOG_CHANNEL_ID}")
+            
         except Exception as e:
-            print(f"Log Failed: {e}")
+            print(f"❌ LOG ERROR: {e}")
+
     threading.Thread(target=_log).start()
 
 # --- 7. QUIZ SYSTEM ---
@@ -299,11 +307,12 @@ def send_new_question(user_id, chat_id):
 
 @bot.message_handler(commands=['raj'])
 def send_welcome(message):
-    bot.reply_to(message, "🔥 **Dev Bot Online!**\n\n✅ Voice Forwarding Active\n✅ Logs Active\n✅ Quiz Timer Active")
+    bot.reply_to(message, "🔥 **Dev Bot Online!**\nLogs Check: /debug")
     send_log_to_channel(message.from_user, "COMMAND", "/raj", "Bot Status Checked")
 
 @bot.message_handler(commands=['debug'])
 def debug_bot(message):
+    # This command checks if logs are working
     try:
         if LOG_CHANNEL_ID:
             bot.send_message(LOG_CHANNEL_ID, "✅ **Test Log from Dev Bot**")
@@ -311,7 +320,7 @@ def debug_bot(message):
         else:
             bot.reply_to(message, "❌ LOG_CHANNEL_ID Missing.")
     except Exception as e:
-        bot.reply_to(message, f"❌ Log Failed! Error: {e}")
+        bot.reply_to(message, f"❌ Log Failed! Error: {e}\n\n*Solution:* Make sure Bot is ADMIN in the channel.")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
@@ -322,7 +331,6 @@ def send_help(message):
 /quiz [topic] - Play Quiz
 /img [prompt] - AI Image
 /settings - Settings
-**Voice:** Send audio to chat!
     """
     bot.reply_to(message, help_text, parse_mode="Markdown")
 
@@ -348,56 +356,7 @@ def handle_quiz_command(message):
     ask_quiz_level(message, topic)
     send_log_to_channel(message.from_user, "QUIZ START", topic, "Level Selection")
 
-# --- 9. VOICE HANDLER ---
-@bot.message_handler(content_types=['voice', 'audio'])
-def handle_voice_chat(message):
-    try:
-        user_id = message.from_user.id
-        
-        # 1. Forward Audio to Log Channel
-        if LOG_CHANNEL_ID:
-            try:
-                bot.forward_message(LOG_CHANNEL_ID, message.chat.id, message.message_id)
-            except: pass
-
-        bot.send_chat_action(message.chat.id, 'record_audio')
-        
-        file_info = bot.get_file(message.voice.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        user_audio_path = f"user_{user_id}.ogg"
-        
-        with open(user_audio_path, 'wb') as f: f.write(downloaded_file)
-
-        if model_basic:
-            myfile = genai.upload_file(user_audio_path)
-            config = get_user_config(user_id)
-            prompt = f"Listen to this audio. Reply in spoken Hinglish style. {RAW_MODES[config['mode']]}"
-            
-            try:
-                result = model_basic.generate_content([prompt, myfile])
-                ai_reply = result.text
-            except Exception as e:
-                ai_reply = f"Audio samajh nahi aaya. Error: {e}"
-            
-            reply_audio_path = f"reply_{user_id}.mp3"
-            clean_txt = clean_text_for_audio(ai_reply)
-            
-            if generate_audio(user_id, clean_txt, reply_audio_path):
-                with open(reply_audio_path, 'rb') as f: bot.send_voice(message.chat.id, f)
-                os.remove(reply_audio_path)
-            else:
-                bot.reply_to(message, ai_reply) 
-            
-            try: os.remove(user_audio_path)
-            except: pass
-            
-            send_log_to_channel(message.from_user, "VOICE REPLY", "Audio Processed", clean_txt)
-            
-    except Exception as e:
-        bot.reply_to(message, "❌ Voice Error")
-        print(f"Voice Error: {e}")
-
-# --- 10. CALLBACKS ---
+# --- 9. CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     user_id = call.from_user.id
@@ -503,27 +462,22 @@ def handle_callbacks(call):
             with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
         except: pass
 
-# --- 11. TEXT HANDLER ---
+# --- 10. TEXT HANDLER ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
         user_id = message.from_user.id
-        
-        # Agar Quiz chal raha hai to text ignore karo
         if user_id in quiz_sessions and quiz_sessions[user_id].get('active'): return
 
         user_text = message.text
         if not user_text: return
         
         config = get_user_config(user_id)
-        
-        # Search Triggers
         triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live", "movie", "film", "release", "aayegi"]
         force_search = any(x in user_text.lower() for x in triggers)
 
         saved_reply = get_reply_from_json(user_text)
         
-        # Memory Logic
         if saved_reply and config['memory'] and not force_search:
             ai_reply = saved_reply
             source = "JSON"
@@ -554,7 +508,7 @@ def handle_text(message):
         
     except Exception as e: print(e)
 
-# --- 12. RUN ---
+# --- 11. RUN ---
 @app.route('/')
 def home(): return "✅ Bot Live", 200
 
