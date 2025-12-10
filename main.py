@@ -1,4 +1,4 @@
-import os
+Import os
 import telebot
 from telebot import types 
 import google.generativeai as genai
@@ -330,7 +330,9 @@ def send_image(message):
     if not prompt: return bot.reply_to(message, "Likho: `/img car`")
     bot.send_chat_action(message.chat.id, 'upload_photo')
     try:
-        url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
+        # --- CHANGES START HERE: Removed 'https' ---
+        url = f"image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?nologo=true"
+        # --- CHANGES END HERE ---
         bot.send_photo(message.chat.id, url, caption=f"🖼️ {prompt}")
         send_log_to_channel(message.from_user, "IMAGE", prompt, "Image Generated")
     except: bot.reply_to(message, "❌ Error.")
@@ -527,39 +529,56 @@ def handle_text(message):
                 if model_search and force_search:
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
                 elif model_basic:
+                    # --- CODE COMPLETION START HERE ---
                     response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                else: response = None
-                ai_reply = response.text if response else "❌ Error."
-            except Exception as e: ai_reply = f"⚠️ {e}"
+                else: 
+                    ai_reply = "AI model is not ready."
+                    source = "Error"
+                    # Exit the handler early if models are missing
+                    bot.reply_to(message, ai_reply)
+                    send_log_to_channel(message.from_user, "TEXT REPLY", user_text, ai_reply)
+                    return
+                
+                ai_reply = response.text
+                source = "AI"
+                if config['memory'] and source == "AI" and len(ai_reply) < 500: # Only save short AI replies
+                    save_to_json(user_text, ai_reply) 
 
-            source = "AI"
-            if "Error" not in ai_reply: save_to_json(user_text, ai_reply)
+            except Exception as e:
+                ai_reply = f"Sorry! AI se connect nahi ho paya. Error: {e}"
+                source = "Error"
+                print(f"Gemini API Error: {e}")
 
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🔊 Suno", callback_data="speak_msg"))
-        bot.reply_to(message, ai_reply, reply_markup=markup)
-        
-        send_log_to_channel(message.from_user, source, user_text, ai_reply)
-        
-    except Exception as e: print(e)
+        # Send the final reply
+        bot.reply_to(message, ai_reply, parse_mode="Markdown")
+        send_log_to_channel(message.from_user, "TEXT REPLY", user_text, ai_reply)
 
-# --- 12. RUN ---
-@app.route('/')
-def home(): return "✅ Bot Live", 200
+    except Exception as e:
+        print(f"Text Handler Error: {e}")
+        try: bot.reply_to(message, "Kuchh gadbad ho gayi. Kripya phir se prayas karein.")
+        except: pass
 
-def run_bot():
-    print("🤖 Bot Started...")
-    try: bot.remove_webhook()
-    except: pass
-    
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"⚠️ Connection Lost: {e}")
-            time.sleep(5)
-
+# --- 12. RUN BOT ---
 if __name__ == "__main__":
-    t = threading.Thread(target=run_bot)
-    t.start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    def run_bot():
+        print("🤖 Bot Polling Started...")
+        while True:
+            try:
+                bot.polling(none_stop=True, interval=0, timeout=20)
+            except Exception as e:
+                print(f"Threaded polling exception: {e}")
+                time.sleep(5)
+    
+    # Use threading for Flask and Telebot
+    threading.Thread(target=run_bot).start()
+    
+    # Simple Flask server for deployment/health checks
+    @app.route("/")
+    def index():
+        return "Dev Bot is Running!", 200
+
+    if os.getenv("PORT"):
+        app.run(host="0.0.0.0", port=os.getenv("PORT"))
+    else:
+        print("Flask server not started. Set PORT in .env for web deployment.")
+        
