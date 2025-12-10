@@ -1,5 +1,20 @@
+# Telegram Bot API and core utilities
 PyTelegramBotAPI
-google-generativeai>=0.8.3
 python-dotenv
 flask
+requests
+
+# Google Gemini AI SDK
+google-generativeai>=0.8.3
+
+# Time Zone Handling (Crucial fix for ModuleNotFoundError)
+pytz
+
+# Text-to-Speech (TTS) libraries
 gTTS
+edge-tts
+
+# Other utilities
+# Although 'subprocess' and 're' are usually built-in, 
+# explicit declaration of key components is good practice.
+# (No need to explicitly list subprocess or re here as they are standard library modules)
