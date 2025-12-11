@@ -81,14 +81,16 @@ genai.configure(api_key=API_KEY)
 
 def get_working_model():
     print("🔄 Loading AI Models...")
-    fallback_model = "gemini-1.5-flash"
+    fallback_model = "gemini-1.5-flash" # Default safe model
     try:
         my_models = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 my_models.append(m.name)
         
-        preferences = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-2.5-flash']
+        # 👇 YAHAN CHANGE KIYA HAI: 1.5-flash ko sabse pehle rakha hai
+        preferences = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-pro']
+        
         selected_model = fallback_model
         
         if my_models:
