@@ -88,7 +88,7 @@ def get_working_model():
             if 'generateContent' in m.supported_generation_methods:
                 my_models.append(m.name)
         
-        preferences = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-pro']
+        preferences = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-2.5-flash']
         selected_model = fallback_model
         
         if my_models:
@@ -503,26 +503,35 @@ def handle_callbacks(call):
             with open("tts.mp3", "rb") as f: bot.send_voice(call.message.chat.id, f)
         except: pass
 
-# --- 11. TEXT HANDLER ---
+# --- 11. TEXT HANDLER (FIXED) ---
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
         user_id = message.from_user.id
+        
+        # 1. Agar Quiz chal raha hai to ignore karein
         if user_id in quiz_sessions and quiz_sessions[user_id].get('active'): return
 
         user_text = message.text
         if not user_text: return
         
         config = get_user_config(user_id)
+        
+        # 2. Search Triggers check karein
         triggers = ["news", "rate", "price", "weather", "who", "what", "where", "kab", "kahan", "kaise", "president", "winner", "live", "movie", "film", "release", "aayegi"]
         force_search = any(x in user_text.lower() for x in triggers)
 
+        # 3. Pehle JSON Memory check karein
         saved_reply = get_reply_from_json(user_text)
         
+        source = "AI" # Default source
+        ai_reply = ""
+
         if saved_reply and config['memory'] and not force_search:
             ai_reply = saved_reply
             source = "JSON"
         else:
+            # 4. AI Response Generate karein
             bot.send_chat_action(message.chat.id, 'typing')
             sys_prompt = f"""
             [System]: Date: {get_current_time()}. Era: Late 2025.
@@ -532,35 +541,35 @@ def handle_text(message):
             try:
                 if model_search and force_search:
                     response = model_search.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                elif model_basic:
-                    # --- CODE COMPLETION START HERE ---
+                else:
                     response = model_basic.generate_content(f"{sys_prompt}\nUser: {user_text}")
-                else: 
-                    ai_reply = "AI model is not ready."
-                    source = "Error"
-                    # Exit the handler early if models are missing
-                    bot.reply_to(message, ai_reply)
-                    send_log_to_channel(message.from_user, "TEXT REPLY", user_text, ai_reply)
-                    return
                 
                 ai_reply = response.text
-                source = "AI"
-                if config['memory'] and source == "AI" and len(ai_reply) < 500: # Only save short AI replies
-                    save_to_json(user_text, ai_reply) 
+                
+                # Agar reply chhota hai to yaad kar le (Optional Memory Logic)
+                if len(user_text.split()) < 5 and len(ai_reply) < 60:
+                    save_to_json(user_text, ai_reply)
 
             except Exception as e:
-                ai_reply = f"Sorry! AI se connect nahi ho paya. Error: {e}"
-                source = "Error"
-                print(f"Gemini API Error: {e}")
+                ai_reply = "⚠️ Abhi server busy hai, thodi der baad try karna."
+                print(f"AI Generation Error: {e}")
 
-        # Send the final reply
-        bot.reply_to(message, ai_reply, parse_mode="Markdown")
-        send_log_to_channel(message.from_user, "TEXT REPLY", user_text, ai_reply)
+        # --- 5. SAFE SENDING LOGIC (Yeh Fix Hai) ---
+        try:
+            # Pehle Markdown ke saath try karein
+            bot.reply_to(message, ai_reply, parse_mode="Markdown")
+        except Exception as e:
+            # Agar Error aaye (Example: Can't parse entities), toh Plain Text bhejein
+            print(f"Markdown Failed, sending plain text. Error: {e}")
+            clean_reply = ai_reply.replace("*", "").replace("_", "").replace("`", "")
+            bot.reply_to(message, clean_reply)
+        
+        # 6. Logs bhejein
+        send_log_to_channel(message.from_user, f"TEXT ({source})", user_text, ai_reply)
 
     except Exception as e:
-        print(f"Text Handler Error: {e}")
-        try: bot.reply_to(message, "Kuchh gadbad ho gayi. Kripya phir se prayas karein.")
-        except: pass
+        print(f"Critical Handler Error: {e}")
+        
 
 # --- 12. RUN BOT ---
 if __name__ == "__main__":
