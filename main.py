@@ -68,7 +68,7 @@ SYSTEM RULES:
 RAW_MODES = {
     "friendly": f"Friendly & Cool. Hinglish. {SECURITY_RULE}",
     "study": f"Strict Teacher. No nonsense. {SECURITY_RULE}",
-    "funny": f"Comedian. Jokes everywhere. {SECURITY_RULE}",
+    "abuse": f"gali do. {SECURITY_RULE}",
     "gk": f"GK Expert. Factual. {SECURITY_RULE}",
 }
 
