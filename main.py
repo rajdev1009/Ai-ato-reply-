@@ -81,30 +81,53 @@ genai.configure(api_key=API_KEY)
 
 def get_working_model():
     print("🔄 Loading AI Models...")
-    # Seedha naya aur fast model use karenge
-    target_model = "gemini-1.5-flash" 
-    
     try:
-        # Check karte hain available models
-        my_models = [m.name for m in genai.list_models()]
+        # Step 1: Server par available saare models ki list nikalo
+        available_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
         
-        # Agar list mein 'models/gemini-1.5-flash' hai toh wahi use karein
-        if 'models/gemini-1.5-flash' in my_models:
-            target_model = "models/gemini-1.5-flash"
+        print(f"📋 Server Models Available: {available_models}")
+
+        # Step 2: Best Model choose karo (Priority Order)
+        # Hum check karenge ki list mein kaunsa exist karta hai
+        priority_list = [
+            'models/gemini-1.5-flash', 
+            'models/gemini-2.5-flash', 
+            'models/gemini-pro',
+            'gemini-1.5-flash',
+            'gemini-pro'
+        ]
         
-        print(f"✅ Selected: {target_model}")
-        return genai.GenerativeModel(target_model), target_model
+        selected_model = "models/gemini-pro" # Fallback (Ye purana hai par sab jagah chalta hai)
+
+        for p in priority_list:
+            if p in available_models:
+                selected_model = p
+                break
+        
+        # Agar list khali thi (Error case), toh default use karo
+        if not available_models:
+            print("⚠️ No models listed from API. Trying default 'gemini-pro'")
+            selected_model = "gemini-pro"
+
+        print(f"✅ FINAL SELECTED: {selected_model}")
+        return genai.GenerativeModel(selected_model), selected_model
 
     except Exception as e:
-        print(f"⚠️ Model Error: {e}")
-        # Agar koi error aaye toh safe mode
-        return genai.GenerativeModel("gemini-1.5-flash"), "gemini-1.5-flash"
+        print(f"⚠️ Model Setup Critical Error: {e}")
+        # Agar sab fail ho jaye, to 'gemini-pro' try karo
+        return genai.GenerativeModel("gemini-pro"), "gemini-pro"
 
 model_basic, active_model_name = get_working_model()
 
 # Search Tool Config
 try:
-    model_search = genai.GenerativeModel(active_model_name, tools='google_search')
+    if "flash" in active_model_name:
+        model_search = genai.GenerativeModel(active_model_name, tools='google_search')
+    else:
+        model_search = None
 except:
     model_search = None
     
