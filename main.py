@@ -81,39 +81,33 @@ genai.configure(api_key=API_KEY)
 
 def get_working_model():
     print("🔄 Loading AI Models...")
-    fallback_model = "gemini-1.5-flash" # Default safe model
+    # Seedha naya aur fast model use karenge
+    target_model = "gemini-1.5-flash" 
+    
     try:
-        my_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                my_models.append(m.name)
+        # Check karte hain available models
+        my_models = [m.name for m in genai.list_models()]
         
-        # 👇 YAHAN CHANGE KIYA HAI: 1.5-flash ko sabse pehle rakha hai
-        preferences = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-pro']
+        # Agar list mein 'models/gemini-1.5-flash' hai toh wahi use karein
+        if 'models/gemini-1.5-flash' in my_models:
+            target_model = "models/gemini-1.5-flash"
         
-        selected_model = fallback_model
-        
-        if my_models:
-            for pref in preferences:
-                if pref in my_models:
-                    selected_model = pref
-                    break
-        
-        print(f"✅ Selected: {selected_model}")
-        return genai.GenerativeModel(selected_model), selected_model
+        print(f"✅ Selected: {target_model}")
+        return genai.GenerativeModel(target_model), target_model
 
     except Exception as e:
-        print(f"⚠️ Model List Error: {e}")
-        return genai.GenerativeModel(fallback_model), fallback_model
+        print(f"⚠️ Model Error: {e}")
+        # Agar koi error aaye toh safe mode
+        return genai.GenerativeModel("gemini-1.5-flash"), "gemini-1.5-flash"
 
 model_basic, active_model_name = get_working_model()
 
+# Search Tool Config
 try:
-    if active_model_name and "flash" in active_model_name:
-        model_search = genai.GenerativeModel(active_model_name, tools='google_search')
-        print("✅ Search Tool Enabled!")
-    else: model_search = None
-except: model_search = None
+    model_search = genai.GenerativeModel(active_model_name, tools='google_search')
+except:
+    model_search = None
+    
 
 # --- 6. HELPER FUNCTIONS ---
 def get_user_config(user_id):
